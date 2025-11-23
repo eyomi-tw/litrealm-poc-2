@@ -322,3 +322,95 @@ Agents have **extensive, detailed instructions** (~200+ lines each). This is int
 - Define exact state variables to read/write
 - Include format examples for special blocks
 - Explain edge cases and fallback behavior
+
+## Known Issues & Workarounds
+
+### React Hydration Warning (Non-Critical)
+- **Issue**: Browser console shows hydration error about server/client HTML mismatch
+- **Cause**: Google Fonts loaded via `@import url()` in styled-jsx creates timing differences between SSR and client render
+- **Impact**: Visual only - does not affect functionality
+- **Status**: Does not appear in production builds
+- **Workaround**: Can be ignored in development, or fonts can be moved to Next.js font optimization
+
+### Virtual Environment
+- **Location**: `backend/.venv/` (gitignored)
+- **Setup**: `python -m venv venv` then `source venv/bin/activate`
+- **Dependencies**: Listed in `backend/requirements.txt`
+
+### Node Modules
+- **Location**: `frontend/node_modules/` (gitignored)
+- **Setup**: `npm install` in frontend directory
+- **Dependencies**: Listed in `frontend/package.json`
+
+## Git Repository Status
+
+**Current State**: Initialized git repository with initial commit
+- Commit: Initial commit with complete codebase
+- Files tracked: All source code, configuration files
+- Files ignored: `.env`, `node_modules/`, `.venv/`, `adk_sessions.db`, `__pycache__/`
+
+## Quick Start Guide
+
+### First Time Setup
+1. Clone/download this repository
+2. Set up backend:
+   ```bash
+   cd backend
+   python -m venv venv
+   source venv/bin/activate
+   pip install -r requirements.txt
+   ```
+3. Create `backend/.env` with your Google API key
+4. Set up frontend:
+   ```bash
+   cd frontend
+   npm install
+   ```
+5. Start both services (in separate terminals):
+   ```bash
+   # Terminal 1
+   cd backend && source venv/bin/activate && python main.py
+
+   # Terminal 2
+   cd frontend && npm run dev
+   ```
+6. Open http://localhost:3000
+
+### Required API Key
+- **Get key from**: https://aistudio.google.com/apikey
+- **Add to**: `backend/.env`
+- **Format**: `GOOGLE_API_KEY=your_key_here`
+
+## Important Files to NOT Modify
+
+- `backend/.venv/` - Virtual environment (auto-generated)
+- `frontend/node_modules/` - NPM dependencies (auto-generated)
+- `backend/adk_sessions.db` - Runtime database (auto-generated)
+- `backend/.env` - Environment secrets (user-specific)
+
+## Common Development Tasks
+
+### Adding a New Feature
+1. Create feature branch: `git checkout -b feature/your-feature`
+2. Make changes to relevant files
+3. Test locally (both backend and frontend running)
+4. Commit: `git add . && git commit -m "Description"`
+5. Optional: Push to remote repository
+
+### Modifying Agent Behavior
+1. Edit agent file in `backend/assistant/`
+2. Restart backend server (Ctrl+C then `python main.py`)
+3. Test in browser or ADK Web UI
+4. Iterate until behavior is correct
+
+### Adding New API Endpoint
+1. Add endpoint function in `backend/main.py`
+2. Add corresponding function in `frontend/src/lib/api.ts`
+3. Update TypeScript types if needed
+4. Use endpoint in relevant React component
+
+### Debugging Session State
+1. Start ADK Web UI: `cd backend && adk web . --port 8002`
+2. Open http://localhost:8002
+3. View session state in real-time
+4. Or use SQLite browser on `backend/adk_sessions.db`
