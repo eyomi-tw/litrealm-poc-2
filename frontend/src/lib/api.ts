@@ -93,10 +93,29 @@ export async function submitOnboarding(
   return response.json();
 }
 
+export interface ValidationCategory {
+  score: number;  // 0-100
+  status: 'PASS' | 'MINOR_ISSUES' | 'FAIL';
+  feedback: string;
+}
+
+export interface ContentValidationResponse {
+  overall_score: number;
+  overall_status: 'PASS' | 'MINOR_ISSUES' | 'FAIL';
+  world_consistency: ValidationCategory;
+  character_consistency: ValidationCategory;
+  narrator_tone: ValidationCategory;
+  quest_alignment: ValidationCategory;
+  story_mode: ValidationCategory;
+  quality_notes: string;
+  suggested_improvements: string;
+}
+
 export interface PrologueGenerationResponse {
   prologue: string;
   quest_template: QuestType;
   session_id: string;
+  validation?: ContentValidationResponse;  // Optional validation results
 }
 
 export interface PrologueGenerationRequest {
@@ -120,6 +139,42 @@ export async function generatePrologue(
   request: PrologueGenerationRequest
 ): Promise<PrologueGenerationResponse> {
   const response = await fetch(`${API_BASE_URL}/generate-prologue`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    throw new Error(`API error: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+// Content Validation
+export interface ContentValidationRequest {
+  content: string;
+  content_type: 'prologue' | 'chapter';
+  mode: string;
+  tone: string;
+  world_template: string;
+  world_name: string;
+  magic_system: string;
+  world_tone: string;
+  character_name: string;
+  character_class: string;
+  background: string;
+  alignment: string;
+  character_role: string;
+  quest_template: string;
+}
+
+export async function validateContent(
+  request: ContentValidationRequest
+): Promise<ContentValidationResponse> {
+  const response = await fetch(`${API_BASE_URL}/validate-content`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

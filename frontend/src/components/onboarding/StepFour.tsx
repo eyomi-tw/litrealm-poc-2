@@ -2,12 +2,15 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { QuestType, StoryConfig, Tone } from '@/lib/types/game';
+import { ContentValidationResponse } from '@/lib/api';
 
 interface StepFourProps {
   initialData?: Partial<StoryConfig> & { tone?: Tone };
   onDataChange: (data: Partial<StoryConfig> & { tone?: Tone }) => void;
   onGeneratePrologue: (questTemplate: QuestType, tone: Tone, customPrompt?: string) => Promise<void>;
+  onValidatePrologue: (prologueText: string, questTemplate: QuestType, tone: Tone) => Promise<void>;
   prologueRef: React.RefObject<HTMLDivElement | null>;
+  validationResults?: ContentValidationResponse | null;
 }
 
 const toneOptions = [
@@ -81,7 +84,7 @@ const questTemplates = [
   }
 ];
 
-export default function StepFour({ initialData, onDataChange, onGeneratePrologue, prologueRef }: StepFourProps) {
+export default function StepFour({ initialData, onDataChange, onGeneratePrologue, onValidatePrologue, prologueRef, validationResults }: StepFourProps) {
   const defaultTone: Tone = 'heroic';
   const defaultQuest: QuestType = 'discovery';
 
@@ -93,6 +96,7 @@ export default function StepFour({ initialData, onDataChange, onGeneratePrologue
   const [customPrompt, setCustomPrompt] = useState<string>('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [isValidating, setIsValidating] = useState(false);
 
   // Pre-select defaults on mount
   useEffect(() => {
@@ -146,12 +150,27 @@ export default function StepFour({ initialData, onDataChange, onGeneratePrologue
   const handlePrologueEdit = (newPrologue: string) => {
     setGeneratedPrologue(newPrologue);
     onDataChange({
+      questType: selectedQuest,
+      tone: selectedTone,
       prologue: {
         questTemplate: selectedQuest!,
         generatedPrologue: newPrologue,
         customPrompt
       }
     });
+  };
+
+  const handleValidate = async () => {
+    if (!selectedQuest || !selectedTone || !generatedPrologue) return;
+
+    setIsValidating(true);
+    try {
+      await onValidatePrologue(generatedPrologue, selectedQuest, selectedTone);
+    } catch (error) {
+      console.error('Failed to validate prologue:', error);
+    } finally {
+      setIsValidating(false);
+    }
   };
 
   // Update local state when initialData changes (from parent)
@@ -242,6 +261,26 @@ export default function StepFour({ initialData, onDataChange, onGeneratePrologue
           {!isGenerating && generatedPrologue && (
             <div className="space-y-4">
               <div className="bg-neutral-50 border border-neutral-200 rounded-lg p-6">
+                <div className="flex justify-between items-start mb-4">
+                  <h4 className="text-sm font-semibold text-neutral-700">
+                    {isEditing ? 'Editing Prologue' : 'Generated Prologue'}
+                  </h4>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleValidate}
+                      disabled={isValidating}
+                      className="px-4 py-1.5 text-sm font-medium rounded-lg transition-colors border border-neutral-300 hover:bg-neutral-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isValidating ? '⏳ Validating...' : '🔍 Validate'}
+                    </button>
+                    <button
+                      onClick={() => setIsEditing(!isEditing)}
+                      className="px-4 py-1.5 text-sm font-medium rounded-lg transition-colors border border-neutral-300 hover:bg-neutral-100"
+                    >
+                      {isEditing ? '✓ Done Editing' : '✏️ Edit'}
+                    </button>
+                  </div>
+                </div>
                 {isEditing ? (
                   <textarea
                     value={generatedPrologue}
@@ -258,6 +297,51 @@ export default function StepFour({ initialData, onDataChange, onGeneratePrologue
                 )}
               </div>
 
+              {/* Validation Results */}
+              {validationResults && (
+                <div className="border border-neutral-200 rounded-lg p-5 bg-white">
+                  <div className="flex items-center justify-between mb-4">
+                    <h4 className="text-sm font-semibold text-neutral-800">AI Quality Validation</h4>
+                    <div className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                      validationResults.overall_status === 'PASS' ? 'bg-green-100 text-green-800' :
+                      validationResults.overall_status === 'MINOR_ISSUES' ? 'bg-yellow-100 text-yellow-800' :
+                      'bg-red-100 text-red-800'
+                    }`}>
+                      {validationResults.overall_status === 'PASS' ? '✓ Excellent' :
+                       validationResults.overall_status === 'MINOR_ISSUES' ? '⚠ Good' : '✗ Needs Work'}
+                      {' '}({validationResults.overall_score}/100)
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-4">
+                    {[
+                      { label: 'World', data: validationResults.world_consistency },
+                      { label: 'Character', data: validationResults.character_consistency },
+                      { label: 'Tone', data: validationResults.narrator_tone },
+                      { label: 'Quest', data: validationResults.quest_alignment },
+                      { label: 'Mode', data: validationResults.story_mode }
+                    ].map(({ label, data }) => (
+                      <div key={label} className="text-center p-2 bg-neutral-50 rounded border border-neutral-200">
+                        <div className="text-xs font-medium text-neutral-600 mb-1">{label}</div>
+                        <div className={`text-lg font-bold ${
+                          data.status === 'PASS' ? 'text-green-600' :
+                          data.status === 'MINOR_ISSUES' ? 'text-yellow-600' :
+                          'text-red-600'
+                        }`}>
+                          {data.score}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {(validationResults.overall_status !== 'PASS' && validationResults.suggested_improvements !== 'None - content is excellent') && (
+                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                      <p className="text-xs font-semibold text-yellow-900 mb-1">Suggestions:</p>
+                      <p className="text-xs text-yellow-800">{validationResults.suggested_improvements}</p>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Regeneration Options */}
               <div className="border-t border-neutral-200 pt-6 mt-6">

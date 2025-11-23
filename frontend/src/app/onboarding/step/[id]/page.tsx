@@ -8,7 +8,7 @@ import StepTwo from '@/components/onboarding/StepTwo';
 import StepThree from '@/components/onboarding/StepThree';
 import StepFour from '@/components/onboarding/StepFour';
 import { GameConfig, QuestType, QuestComplexity, SceneCreationMethod, TimeOfDay } from '@/lib/types/game';
-import { submitOnboarding, generatePrologue } from '@/lib/api';
+import { submitOnboarding, generatePrologue, validateContent } from '@/lib/api';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -25,6 +25,7 @@ export default function OnboardingStepPage({ params }: PageProps) {
   const [isLaunching, setIsLaunching] = useState(false);
   const [isGeneratingPrologue, setIsGeneratingPrologue] = useState(false);
   const [lastError, setLastError] = useState<string>('');
+  const [validationResults, setValidationResults] = useState<any>(null);
   const prologueRef = useRef<HTMLDivElement>(null);
 
   // Load draft config from localStorage on mount
@@ -147,6 +148,34 @@ export default function OnboardingStepPage({ params }: PageProps) {
     setCanContinue(hasSelections);
   };
 
+  // Validation handler for manually edited prologues
+  const handleValidatePrologue = async (prologueText: string, questTemplate: any, tone: any) => {
+    try {
+      const validationResponse = await validateContent({
+        content: prologueText,
+        content_type: 'prologue',
+        mode: draftConfig.mode || 'progression',
+        tone: tone,
+        world_template: draftConfig.world?.template || 'Unknown',
+        world_name: draftConfig.world?.name || 'The Realm',
+        magic_system: draftConfig.world?.magicSystem || 'on',
+        world_tone: draftConfig.world?.worldTone || 'heroic',
+        character_name: draftConfig.character?.name || 'Adventurer',
+        character_class: draftConfig.character?.class || 'warrior',
+        background: draftConfig.character?.background || 'unknown',
+        alignment: draftConfig.character?.alignment || 'neutral_good',
+        character_role: draftConfig.character?.role || 'hero',
+        quest_template: questTemplate
+      });
+
+      setValidationResults(validationResponse);
+      console.log('[Manual Prologue Validation]', validationResponse);
+    } catch (error) {
+      console.error('Failed to validate prologue:', error);
+      throw error;
+    }
+  };
+
   // Prologue generation handler for Step 4
   const handleGeneratePrologue = async (questTemplate: any, tone: any, customPrompt?: string) => {
     try {
@@ -167,6 +196,12 @@ export default function OnboardingStepPage({ params }: PageProps) {
         alignment: draftConfig.character?.alignment,
         character_role: draftConfig.character?.role
       });
+
+      // Store validation results if available
+      if (response.validation) {
+        setValidationResults(response.validation);
+        console.log('[Prologue Validation]', response.validation);
+      }
 
       // Update draft config with generated prologue and tone
       // Ensure story has all required fields
@@ -307,7 +342,9 @@ export default function OnboardingStepPage({ params }: PageProps) {
             }}
             onDataChange={handleStepFourData}
             onGeneratePrologue={handleGeneratePrologue}
+            onValidatePrologue={handleValidatePrologue}
             prologueRef={prologueRef}
+            validationResults={validationResults}
           />
         );
       default:

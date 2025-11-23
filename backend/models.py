@@ -204,3 +204,38 @@ class PrologueGenerationResponse(BaseModel):
     prologue: str
     quest_template: QuestType
     session_id: str
+    validation: Optional['ContentValidationResponse'] = None  # Optional validation results
+
+# Content Validation Models
+class ValidationCategory(BaseModel):
+    score: int  # 0-100
+    status: Literal['PASS', 'MINOR_ISSUES', 'FAIL']
+    feedback: str
+
+class ContentValidationRequest(BaseModel):
+    content: str  # The prologue or chapter text to validate
+    content_type: Literal['prologue', 'chapter']  # Type of content being validated
+    # Story configuration context - using str instead of Literal to allow flexible values
+    mode: str  # StoryMode
+    tone: str  # Tone
+    world_template: str
+    world_name: str
+    magic_system: str  # MagicSystem
+    world_tone: str  # WorldTone
+    character_name: str
+    character_class: str  # CharacterClass
+    background: str  # Background
+    alignment: str  # Alignment
+    character_role: str  # CharacterRole
+    quest_template: str  # QuestType
+
+class ContentValidationResponse(BaseModel):
+    overall_score: int  # 0-100
+    overall_status: Literal['PASS', 'MINOR_ISSUES', 'FAIL']
+    world_consistency: ValidationCategory
+    character_consistency: ValidationCategory
+    narrator_tone: ValidationCategory
+    quest_alignment: ValidationCategory
+    story_mode: ValidationCategory
+    quality_notes: str
+    suggested_improvements: str

@@ -14,7 +14,12 @@ from google.genai import types
 from assistant.agent import root_agent, chat_agent
 from assistant.story_compiler_agent import story_compiler_agent
 from assistant.prologue_generator_agent import prologue_generator_agent
-from models import GameConfig, CompiledStoryResponse, CompiledStory, StoryMetadata, StoryChapter, PrologueGenerationRequest, PrologueGenerationResponse
+from assistant.content_validation_agent import content_validation_agent
+from models import (
+    GameConfig, CompiledStoryResponse, CompiledStory, StoryMetadata, StoryChapter,
+    PrologueGenerationRequest, PrologueGenerationResponse,
+    ContentValidationRequest, ContentValidationResponse, ValidationCategory
+)
 
 load_dotenv()
 
@@ -497,10 +502,38 @@ QUEST TEMPLATE: {context_data['quest_template']}
 
         prologue_text = ''.join(response_parts).strip()
 
+        # Automatically validate the generated prologue
+        validation_result = None
+        try:
+            validation_request = ContentValidationRequest(
+                content=prologue_text,
+                content_type='prologue',
+                mode=context_data['mode'],
+                tone=context_data['tone'],
+                world_template=context_data['world_template'],
+                world_name=context_data['world_name'],
+                magic_system=context_data['magic_system'],
+                world_tone=context_data['world_tone'],
+                character_name=context_data['character_name'],
+                character_class=context_data['character_class'],
+                background=context_data['background'],
+                alignment=context_data['alignment'],
+                character_role=context_data['character_role'],
+                quest_template=request.quest_template
+            )
+
+            # Run validation
+            validation_result = await validate_content(validation_request)
+            print(f"Prologue validation completed - Score: {validation_result.overall_score}, Status: {validation_result.overall_status}")
+        except Exception as validation_error:
+            print(f"Warning: Prologue validation failed: {str(validation_error)}")
+            # Continue even if validation fails - validation is optional
+
         return PrologueGenerationResponse(
             prologue=prologue_text,
             quest_template=request.quest_template,
-            session_id=prologue_session_id
+            session_id=prologue_session_id,
+            validation=validation_result
         )
 
     except Exception as e:
@@ -722,6 +755,142 @@ Transform the raw gameplay into a beautiful narrative following your instruction
         import traceback
         print(f"Error compiling story: {str(e)}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail={"error": str(e)})
+
+@app.post("/validate-content", response_model=ContentValidationResponse)
+async def validate_content(request: ContentValidationRequest):
+    """
+    Validate narrative content (prologue or chapter) for consistency with story configuration.
+    Uses the Content Validation Agent to check world, character, tone, quest, and mode alignment.
+    """
+    try:
+        user_id = "validator"
+        validation_session_id = f"validation_{uuid.uuid4()}"
+
+        # Build validation prompt with content and configuration
+        validation_prompt = f"""CONTENT_TO_VALIDATE:
+{request.content}
+
+STORY_CONFIGURATION:
+- mode: {request.mode}
+- tone: {request.tone}
+- world_template: {request.world_template}
+- world_name: {request.world_name}
+- magic_system: {request.magic_system}
+- world_tone: {request.world_tone}
+- character_name: {request.character_name}
+- character_class: {request.character_class}
+- background: {request.background}
+- alignment: {request.alignment}
+- character_role: {request.character_role}
+- quest_template: {request.quest_template}
+
+Please validate this {request.content_type} and provide your assessment."""
+
+        # Run validation using standalone runner
+        validation_runner = Runner(
+            app_name='litrealms_validation',
+            agent=content_validation_agent,
+            session_service=session_service
+        )
+
+        # Create session for validation
+        await session_service.create_session(
+            app_name='litrealms_validation',
+            user_id=user_id,
+            session_id=validation_session_id,
+            state={}
+        )
+
+        # Use Content for the message
+        message = types.Content(
+            role='user',
+            parts=[types.Part(text=validation_prompt)]
+        )
+
+        response_text = ""
+        async for event in validation_runner.run_async(
+            user_id=user_id,
+            session_id=validation_session_id,
+            new_message=message
+        ):
+            if event.content and event.content.parts:
+                for part in event.content.parts:
+                    if hasattr(part, 'text') and part.text:
+                        response_text += part.text
+
+        # Parse validation response
+        validation_result = parse_validation_response(response_text)
+
+        return validation_result
+
+    except Exception as e:
+        import traceback
+        print(f"Error validating content: {str(e)}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+def parse_validation_response(response_text: str) -> ContentValidationResponse:
+    """
+    Parse the validation agent's structured response into ContentValidationResponse model.
+    """
+    try:
+        # Extract sections using regex
+        overall_score = int(re.search(r'OVERALL_SCORE:\s*(\d+)', response_text).group(1))
+        overall_status = re.search(r'OVERALL_STATUS:\s*(PASS|MINOR_ISSUES|FAIL)', response_text).group(1)
+
+        # Parse each validation category
+        def parse_category(category_name: str) -> ValidationCategory:
+            pattern = rf'{category_name}:\s*-\s*Score:\s*(\d+)\s*-\s*Status:\s*(PASS|MINOR_ISSUES|FAIL)\s*-\s*Feedback:\s*([^\n]+(?:\n(?![\w_]+:)[^\n]+)*)'
+            match = re.search(pattern, response_text, re.IGNORECASE | re.MULTILINE)
+            if match:
+                return ValidationCategory(
+                    score=int(match.group(1)),
+                    status=match.group(2),
+                    feedback=match.group(3).strip()
+                )
+            else:
+                # Fallback if parsing fails
+                return ValidationCategory(score=0, status='FAIL', feedback=f'Failed to parse {category_name}')
+
+        world_consistency = parse_category('WORLD_CONSISTENCY')
+        character_consistency = parse_category('CHARACTER_CONSISTENCY')
+        narrator_tone = parse_category('NARRATOR_TONE')
+        quest_alignment = parse_category('QUEST_ALIGNMENT')
+        story_mode = parse_category('STORY_MODE')
+
+        # Extract quality notes and suggestions
+        quality_match = re.search(r'QUALITY_NOTES:\s*([^\n]+(?:\n(?![\w_]+:)[^\n]+)*)', response_text, re.MULTILINE)
+        quality_notes = quality_match.group(1).strip() if quality_match else "No quality notes provided"
+
+        suggestions_match = re.search(r'SUGGESTED_IMPROVEMENTS:\s*([^\n]+(?:\n(?![\w_]+:)[^\n]+)*)', response_text, re.MULTILINE)
+        suggested_improvements = suggestions_match.group(1).strip() if suggestions_match else "None"
+
+        return ContentValidationResponse(
+            overall_score=overall_score,
+            overall_status=overall_status,
+            world_consistency=world_consistency,
+            character_consistency=character_consistency,
+            narrator_tone=narrator_tone,
+            quest_alignment=quest_alignment,
+            story_mode=story_mode,
+            quality_notes=quality_notes,
+            suggested_improvements=suggested_improvements
+        )
+
+    except Exception as e:
+        print(f"Error parsing validation response: {str(e)}")
+        print(f"Response text: {response_text}")
+        # Return a fallback response
+        return ContentValidationResponse(
+            overall_score=0,
+            overall_status='FAIL',
+            world_consistency=ValidationCategory(score=0, status='FAIL', feedback='Parsing error'),
+            character_consistency=ValidationCategory(score=0, status='FAIL', feedback='Parsing error'),
+            narrator_tone=ValidationCategory(score=0, status='FAIL', feedback='Parsing error'),
+            quest_alignment=ValidationCategory(score=0, status='FAIL', feedback='Parsing error'),
+            story_mode=ValidationCategory(score=0, status='FAIL', feedback='Parsing error'),
+            quality_notes='Failed to parse validation response',
+            suggested_improvements='Please regenerate content'
+        )
 
 if __name__ == "__main__":
     import uvicorn
