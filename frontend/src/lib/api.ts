@@ -40,6 +40,11 @@ export interface ChatResponse {
     character_class?: string;
     character_name?: string;
     tone?: string;
+    current_location?: string;
+    time_of_day?: string;
+    weather?: string;
+    current_quest?: string;
+    npcs_present?: string[];
   };
 }
 
@@ -71,6 +76,8 @@ export async function healthCheck(): Promise<{ status: string }> {
 }
 
 export interface OnboardingSubmitResponse {
+  book_id: string;
+  chapter_id: string;
   session_id: string;
   message: string;
 }
@@ -309,6 +316,178 @@ export async function getSessionHistory(sessionId: string): Promise<SessionHisto
 
   if (!response.ok) {
     throw new Error(`Failed to get session history: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+// Book API
+export interface BookResponse {
+  id: string;
+  user_id: string;
+  title: string;
+  subtitle?: string;
+  game_config: GameConfig;
+  chapters: Array<{
+    id: string;
+    book_id: string;
+    number: number;
+    title: string;
+    status: 'draft' | 'in_progress' | 'complete' | 'published';
+    session_id: string;
+    game_transcript: Array<{ role: string; content: string; timestamp: string }>;
+    initial_state: any;
+    final_state: any;
+    authored_content: string;
+    last_edited: string;
+    word_count: number;
+    previous_chapter_id?: string;
+    next_chapter_id?: string;
+    narrative_summary?: string;
+    created_at: string;
+    updated_at: string;
+  }>;
+  created_at: string;
+  updated_at: string;
+  total_word_count: number;
+}
+
+export async function listBooks(): Promise<BookResponse[]> {
+  const response = await fetch(`${API_BASE_URL}/books`);
+
+  if (!response.ok) {
+    throw new Error(`Failed to list books: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+export async function getBook(bookId: string): Promise<BookResponse> {
+  const response = await fetch(`${API_BASE_URL}/books/${bookId}`);
+
+  if (!response.ok) {
+    throw new Error(`Failed to get book: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+export async function deleteBook(bookId: string): Promise<{ message: string }> {
+  const response = await fetch(`${API_BASE_URL}/books/${bookId}`, {
+    method: 'DELETE',
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to delete book: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+export interface UpdateBookRequest {
+  title?: string;
+  subtitle?: string;
+  character_name?: string;
+}
+
+export async function updateBook(bookId: string, updates: UpdateBookRequest): Promise<BookResponse> {
+  const response = await fetch(`${API_BASE_URL}/books/${bookId}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(updates),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to update book: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+// Chapter API
+export async function getChapter(chapterId: string) {
+  const response = await fetch(`${API_BASE_URL}/chapters/${chapterId}`);
+
+  if (!response.ok) {
+    throw new Error(`Failed to get chapter: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+export interface ChapterCompilationResponse {
+  narrative: string;
+  chapter_id: string;
+  word_count: number;
+  compiled_at: string;
+}
+
+export async function compileChapter(chapterId: string): Promise<ChapterCompilationResponse> {
+  const response = await fetch(`${API_BASE_URL}/chapters/${chapterId}/compile`, {
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to compile chapter: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+export interface UpdateChapterRequest {
+  authored_content?: string;
+  title?: string;
+  status?: 'draft' | 'in_progress' | 'complete' | 'published';
+}
+
+export async function updateChapter(chapterId: string, updates: UpdateChapterRequest) {
+  const response = await fetch(`${API_BASE_URL}/chapters/${chapterId}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(updates),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to update chapter: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+export interface CompleteChapterResponse {
+  message: string;
+  chapter: any;
+  next_chapter: any | null;
+  next_chapter_created: boolean;
+}
+
+export async function completeChapter(chapterId: string, createNext: boolean = false): Promise<CompleteChapterResponse> {
+  const response = await fetch(`${API_BASE_URL}/chapters/${chapterId}/complete`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ create_next: createNext }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to complete chapter: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+export async function deleteChapter(chapterId: string): Promise<{ message: string }> {
+  const response = await fetch(`${API_BASE_URL}/chapters/${chapterId}`, {
+    method: 'DELETE',
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to delete chapter: ${response.statusText}`);
   }
 
   return response.json();

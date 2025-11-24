@@ -25,5 +25,5 @@ def get_prologue(tool_context: "ToolContext") -> str:
     prologue = session_state.get('prologue', '')
 
     if prologue:
-        return f"PROLOGUE_TEXT: {prologue}"
+        return prologue  # Return clean text without prefix - agent will use it directly
     return "No prologue found in session state. Generate a fresh opening scene instead."

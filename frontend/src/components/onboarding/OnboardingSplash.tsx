@@ -1,9 +1,55 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import { useState, useEffect } from 'react';
+import { listBooks, deleteBook, type BookResponse } from '@/lib/api';
 
 export default function OnboardingSplash() {
   const router = useRouter();
+  const [books, setBooks] = useState<BookResponse[]>([]);
+  const [isLoadingBooks, setIsLoadingBooks] = useState(true);
+  const [bookToDelete, setBookToDelete] = useState<BookResponse | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  useEffect(() => {
+    const loadBooks = async () => {
+      try {
+        setIsLoadingBooks(true);
+        const userBooks = await listBooks();
+        setBooks(userBooks);
+      } catch (error) {
+        console.error('Error loading books:', error);
+      } finally {
+        setIsLoadingBooks(false);
+      }
+    };
+    loadBooks();
+  }, []);
+
+  const handleDeleteClick = (e: React.MouseEvent, book: BookResponse) => {
+    e.stopPropagation();
+    setBookToDelete(book);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!bookToDelete) return;
+
+    try {
+      setIsDeleting(true);
+      await deleteBook(bookToDelete.id);
+      setBooks(books.filter(b => b.id !== bookToDelete.id));
+      setBookToDelete(null);
+    } catch (error) {
+      console.error('Error deleting book:', error);
+      alert('Failed to delete book. Please try again.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleCancelDelete = () => {
+    setBookToDelete(null);
+  };
 
   return (
     <>
@@ -93,6 +139,69 @@ export default function OnboardingSplash() {
               </button>
             </div>
           </div>
+
+          {/* My Books Section */}
+          {!isLoadingBooks && books.length > 0 && (
+            <div className="bg-gradient-to-br from-[#EDF1F3] to-white border-2 rounded-xl p-4 md:p-5 mb-4 md:mb-5 shadow-lg" style={{ borderColor: 'var(--tw-sapphire-blue)' }}>
+              <div className="flex items-center space-x-3 mb-4">
+                <div className="w-7 h-7 md:w-8 md:h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: 'var(--tw-sapphire-blue)' }}>
+                  <svg className="w-3.5 h-3.5 md:w-4 md:h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                  </svg>
+                </div>
+                <h3 className="headline text-lg md:text-xl font-bold" style={{ color: 'var(--tw-sapphire-blue)' }}>My Books</h3>
+              </div>
+              <p className="text-gray-700 mb-4 text-sm md:text-base leading-relaxed">
+                Continue writing your existing books or start a new one.
+              </p>
+
+              {/* Books Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
+                {books.map((book) => (
+                  <div
+                    key={book.id}
+                    className="bg-white border-2 rounded-lg p-4 hover:shadow-lg transition-all group relative"
+                    style={{ borderColor: 'var(--tw-wave-blue)' }}
+                  >
+                    <div onClick={() => router.push(`/book/${book.id}`)} className="cursor-pointer">
+                      <h4 className="font-bold mb-2 text-base group-hover:text-[var(--tw-wave-blue)] transition-colors line-clamp-1" style={{ color: 'var(--tw-sapphire-blue)' }}>
+                        {book.title}
+                      </h4>
+                      {book.subtitle && (
+                        <p className="text-sm text-gray-600 mb-3 line-clamp-2">{book.subtitle}</p>
+                      )}
+                      <div className="flex items-center justify-between text-xs text-gray-600">
+                        <span>{book.chapters.length} {book.chapters.length === 1 ? 'chapter' : 'chapters'}</span>
+                        <span>{book.total_word_count.toLocaleString()} words</span>
+                      </div>
+                      <div className="mt-3 pt-3 border-t border-gray-200">
+                        <div className="flex items-center text-xs text-gray-700">
+                          <svg className="w-3.5 h-3.5 mr-1.5" style={{ color: 'var(--tw-wave-blue)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                          </svg>
+                          <span className="truncate">{book.game_config.character.name}</span>
+                          <span className="mx-2">•</span>
+                          <svg className="w-3.5 h-3.5 mr-1.5" style={{ color: 'var(--tw-wave-blue)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          <span className="truncate">{book.game_config.world.name}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      onClick={(e) => handleDeleteClick(e, book)}
+                      className="absolute top-2 right-2 p-2 rounded-lg hover:bg-red-100 transition-colors"
+                      title="Delete book"
+                    >
+                      <svg className="w-4 h-4" style={{ color: 'var(--tw-flamingo-pink)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* End-to-End Journey */}
           <div className="bg-gradient-to-br from-[#EDF1F3] to-white border-2 rounded-xl p-4 md:p-5 mb-4 md:mb-5 shadow-lg" style={{ borderColor: 'var(--tw-sapphire-blue)' }}>
@@ -443,6 +552,41 @@ export default function OnboardingSplash() {
           </div>
         </div>
       </main>
+
+      {/* Delete Confirmation Modal */}
+      {bookToDelete && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6" style={{ border: '2px solid var(--tw-sapphire-blue)' }}>
+            <h3 className="text-2xl font-bold headline mb-4" style={{ color: 'var(--tw-sapphire-blue)' }}>
+              Delete Book?
+            </h3>
+            <p className="text-gray-700 mb-2">
+              Are you sure you want to delete <span className="font-bold">"{bookToDelete.title}"</span>?
+            </p>
+            <p className="text-gray-600 text-sm mb-6">
+              This will permanently delete the book and all its chapters ({bookToDelete.chapters.length} {bookToDelete.chapters.length === 1 ? 'chapter' : 'chapters'}, {bookToDelete.total_word_count.toLocaleString()} words). This action cannot be undone.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={handleCancelDelete}
+                disabled={isDeleting}
+                className="flex-1 px-4 py-3 bg-white border-2 rounded-lg font-semibold hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ borderColor: 'var(--tw-sapphire-blue)', color: 'var(--tw-sapphire-blue)' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmDelete}
+                disabled={isDeleting}
+                className="flex-1 px-4 py-3 text-white rounded-lg font-semibold hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ backgroundColor: 'var(--tw-flamingo-pink)' }}
+              >
+                {isDeleting ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

@@ -4,8 +4,9 @@ import uuid
 import re
 import json
 from datetime import datetime
+from typing import List
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from google.adk.sessions import DatabaseSessionService
@@ -18,8 +19,11 @@ from assistant.content_validation_agent import content_validation_agent
 from models import (
     GameConfig, CompiledStoryResponse, CompiledStory, StoryMetadata, StoryChapter,
     PrologueGenerationRequest, PrologueGenerationResponse,
-    ContentValidationRequest, ContentValidationResponse, ValidationCategory
+    ContentValidationRequest, ContentValidationResponse, ValidationCategory,
+    Book, Chapter, GameMessage, CreateBookRequest, CreateChapterRequest,
+    UpdateChapterRequest, CompleteChapterRequest, ChapterCompilationResponse
 )
+import database as db
 
 load_dotenv()
 
@@ -139,13 +143,27 @@ async def health():
 @app.post("/submit-onboarding")
 async def submit_onboarding(config: GameConfig):
     """
-    Create new gameplay session with complete onboarding configuration.
+    Create new Book and Chapter 1 with complete onboarding configuration.
     This is called when user clicks "Launch Adventure" after completing onboarding.
-    All agents will have access to this data via session.state
+    Returns book_id and chapter_id for navigation to chapter page.
     """
     try:
         user_id = "user"
-        session_id = config.id  # Use the session_id from GameConfig.id
+
+        # Create Book with custom title or auto-generated title
+        if config.bookTitle and config.bookTitle.strip():
+            book_title = config.bookTitle.strip()
+        else:
+            book_title = f"{config.character.name}'s Adventure"
+
+        book = db.create_book(
+            user_id=user_id,
+            title=book_title,
+            game_config=config
+        )
+
+        # Create ADK session for Chapter 1
+        chapter_session_id = f"chapter_{uuid.uuid4()}"
 
         # Map GameConfig to session state format that agents expect
         session_state = {
@@ -195,22 +213,572 @@ async def submit_onboarding(config: GameConfig):
             'story_started': False,  # Flag to indicate if the first message has been sent
         }
 
-        # Create new session for gameplay
+        # Create ADK session for Chapter 1 gameplay
         await session_service.create_session(
             app_name='litrealms',
             user_id=user_id,
-            session_id=session_id,
+            session_id=chapter_session_id,
             state=session_state
         )
 
+        # Send initial message to trigger DM's opening narration
+        initial_message = types.Content(
+            role='user',
+            parts=[types.Part(text="I'm ready to begin my adventure!")]
+        )
+
+        opening_response_parts = []
+        async for event in runner.run_async(
+            user_id=user_id,
+            session_id=chapter_session_id,
+            new_message=initial_message
+        ):
+            if event.content and event.content.parts:
+                for part in event.content.parts:
+                    if hasattr(part, 'text') and part.text:
+                        opening_response_parts.append(part.text)
+
+        opening_response = ''.join(opening_response_parts)
+
+        # Parse [ACTIONS] block from opening response to extract clean content
+        # The actions will be parsed again by the frontend when loading the chapter
+        clean_opening_response, _ = parse_actions(opening_response)
+
+        # Create Chapter 1 with the opening exchange in the transcript
+        chapter_1 = db.create_chapter(
+            book_id=book.id,
+            title="Chapter 1: The Journey Begins",
+            session_id=chapter_session_id,
+            initial_state=session_state
+        )
+
+        # Add the initial exchange to the chapter's game transcript
+        # Store the FULL response (with [ACTIONS]) so frontend can parse it
+        initial_transcript = [
+            {
+                'role': 'user',
+                'content': "I'm ready to begin my adventure!",
+                'timestamp': datetime.utcnow().isoformat()
+            },
+            {
+                'role': 'assistant',
+                'content': opening_response,  # Keep full response with [ACTIONS] block
+                'timestamp': datetime.utcnow().isoformat()
+            }
+        ]
+        db.update_chapter(
+            chapter_id=chapter_1.id,
+            game_transcript=json.dumps(initial_transcript),
+            status='in_progress'
+        )
+
         return {
-            "session_id": session_id,
-            "message": "Onboarding data submitted successfully. Your adventure is ready to begin!"
+            "book_id": book.id,
+            "chapter_id": chapter_1.id,
+            "session_id": chapter_session_id,
+            "message": "Book and Chapter 1 created successfully!"
         }
 
     except Exception as e:
         import traceback
         print(f"Error in submit_onboarding: {str(e)}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+@app.get("/books", response_model=List[Book])
+async def list_books_endpoint():
+    """
+    List all books for the default user.
+    In a production system, this would use authentication to get the user_id.
+    """
+    try:
+        # For now, using a default user_id since there's no auth system
+        user_id = "user"
+        books = db.list_books_by_user(user_id)
+        return books
+    except Exception as e:
+        print(f"Error listing books: {str(e)}")
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+@app.get("/books/{book_id}", response_model=Book)
+async def get_book_endpoint(book_id: str):
+    """
+    Get a book by ID with all its chapters.
+    Returns book metadata, game config, and list of all chapters.
+    """
+    try:
+        book = db.get_book(book_id)
+
+        if not book:
+            raise HTTPException(status_code=404, detail=f"Book {book_id} not found")
+
+        return book
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error retrieving book {book_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+@app.delete("/books/{book_id}")
+async def delete_book_endpoint(book_id: str):
+    """
+    Delete a book and all its associated chapters.
+    This operation cannot be undone.
+    """
+    try:
+        # First check if book exists
+        book = db.get_book(book_id)
+        if not book:
+            raise HTTPException(status_code=404, detail=f"Book {book_id} not found")
+
+        # Delete the book and all its chapters
+        success = db.delete_book(book_id)
+
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to delete book")
+
+        return {"message": f"Book {book_id} and all its chapters deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error deleting book {book_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+@app.patch("/books/{book_id}", response_model=Book)
+async def update_book_endpoint(book_id: str, request: Request):
+    """
+    Update book metadata (title, subtitle, character name).
+    Only provided fields will be updated.
+    """
+    try:
+        # First check if book exists
+        book = db.get_book(book_id)
+        if not book:
+            raise HTTPException(status_code=404, detail=f"Book {book_id} not found")
+
+        # Parse request body
+        body = await request.json()
+
+        title = body.get('title')
+        subtitle = body.get('subtitle')
+        character_name = body.get('character_name')
+
+        # If character_name is provided, update it in the game_config
+        game_config = None
+        if character_name is not None:
+            game_config = book.game_config
+            game_config.character.name = character_name
+
+        # Update the book
+        updated_book = db.update_book(
+            book_id=book_id,
+            title=title,
+            subtitle=subtitle,
+            game_config=game_config
+        )
+
+        if not updated_book:
+            raise HTTPException(status_code=500, detail="Failed to update book")
+
+        return updated_book
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error updating book {book_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+@app.get("/chapters/{chapter_id}")
+async def get_chapter_endpoint(chapter_id: str):
+    """
+    Get a single chapter by ID.
+    Returns chapter data including game transcript, state, and authored content.
+    Parses [ACTIONS] blocks from assistant messages and includes them in response.
+    """
+    try:
+        chapter = db.get_chapter(chapter_id)
+
+        if not chapter:
+            raise HTTPException(status_code=404, detail=f"Chapter {chapter_id} not found")
+
+        # Parse [ACTIONS] blocks from game transcript messages
+        # and create enriched transcript with clean content and extracted actions
+        enriched_transcript = []
+        for msg in chapter.game_transcript:
+            msg_dict = msg if isinstance(msg, dict) else {'role': msg.role, 'content': msg.content}
+
+            if msg_dict['role'] == 'assistant':
+                # Parse actions from assistant messages
+                clean_content, actions = parse_actions(msg_dict['content'])
+                enriched_transcript.append({
+                    **msg_dict,
+                    'content': clean_content,
+                    'quick_actions': [action.dict() for action in actions] if actions else []
+                })
+            else:
+                enriched_transcript.append(msg_dict)
+
+        # Return chapter with enriched transcript
+        chapter_dict = chapter.model_dump() if hasattr(chapter, 'model_dump') else chapter
+        chapter_dict['game_transcript'] = enriched_transcript
+
+        return chapter_dict
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error retrieving chapter {chapter_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+@app.post("/chapters/{chapter_id}/compile", response_model=ChapterCompilationResponse)
+async def compile_chapter(chapter_id: str):
+    """
+    Compile a chapter's gameplay transcript into polished authored content.
+    Uses the Story Compiler Agent with creative enrichments (reflections, doubts, dialogue).
+    Returns the compiled narrative text ready to be saved as authored_content.
+    """
+    try:
+        # Get chapter with game transcript
+        chapter = db.get_chapter(chapter_id)
+        if not chapter:
+            raise HTTPException(status_code=404, detail=f"Chapter {chapter_id} not found")
+
+        # Get book to access game_config (for tone, mode, etc.)
+        book = db.get_book(chapter.book_id)
+        if not book:
+            raise HTTPException(status_code=404, detail=f"Book {chapter.book_id} not found")
+
+        # Format chapter data for the Story Compiler Agent
+        chapter_data = {
+            "session_history": [
+                {
+                    "role": msg.role if hasattr(msg, 'role') else msg['role'],
+                    "content": msg.content if hasattr(msg, 'content') else msg['content']
+                }
+                for msg in chapter.game_transcript
+            ],
+            "initial_state": chapter.initial_state,
+            "final_state": chapter.final_state,
+            "story_mode": book.game_config.mode,
+            "narrator_tone": book.game_config.tone,
+            "world_name": book.game_config.world.name,
+            "character_name": book.game_config.character.name,
+            "character_class": book.game_config.character.character_class,
+            "chapter_number": chapter.number,
+            "chapter_title": chapter.title
+        }
+
+        # Create prompt for Story Compiler Agent
+        compilation_prompt = f"""Compile this chapter's gameplay into polished LitRPG prose.
+
+CHAPTER INFO:
+- Book Title: {book.title}
+- Chapter: {chapter.number} - {chapter.title}
+- Story Mode: {book.game_config.mode}
+- Narrator Tone: {book.game_config.tone}
+- World: {book.game_config.world.name}
+- Character: {book.game_config.character.name} (Class: {book.game_config.character.character_class})
+
+GAMEPLAY DATA:
+{json.dumps(chapter_data, indent=2)}
+
+INSTRUCTIONS:
+Transform the raw gameplay into a beautiful, publishable narrative following your instructions.
+- Add creative enrichments: internal reflections, doubts, dialogue, sensory details
+- Match the {book.game_config.tone} tone
+- Stay true to the {book.game_config.mode} story mode
+- Return ONLY the narrative text (not JSON) - the compiled prose ready for the authored_content field.
+- Do NOT include chapter headers or formatting - just the story prose."""
+
+        # Create temporary session for compilation
+        compile_session_id = f"compile_chapter_{chapter_id}"
+        user_id = "user"
+
+        # Check if compile session already exists
+        existing_compile_session = await session_service.get_session(
+            app_name='litrealms_compiler',
+            user_id=user_id,
+            session_id=compile_session_id
+        )
+
+        # Only create the compile session if it doesn't exist
+        if not existing_compile_session:
+            await session_service.create_session(
+                app_name='litrealms_compiler',
+                user_id=user_id,
+                session_id=compile_session_id,
+                state={}
+            )
+
+        # Run Story Compiler Agent
+        compiler_runner = Runner(
+            app_name='litrealms_compiler',
+            agent=story_compiler_agent,
+            session_service=session_service
+        )
+
+        message = types.Content(
+            role='user',
+            parts=[types.Part(text=compilation_prompt)]
+        )
+
+        response_parts = []
+        async for event in compiler_runner.run_async(
+            user_id=user_id,
+            session_id=compile_session_id,
+            new_message=message
+        ):
+            if event.content and event.content.parts:
+                for part in event.content.parts:
+                    if hasattr(part, 'text') and part.text:
+                        response_parts.append(part.text)
+
+        raw_response = ''.join(response_parts).strip()
+
+        # Try to parse as JSON and extract narrative field
+        # The story compiler agent returns JSON despite instructions to return plain text
+        try:
+            compiled_data = json.loads(raw_response)
+            narrative = compiled_data.get('narrative', raw_response)
+        except json.JSONDecodeError:
+            # If not JSON, use the raw response as narrative
+            narrative = raw_response
+
+        # Calculate word count
+        word_count = len(narrative.split())
+
+        return ChapterCompilationResponse(
+            narrative=narrative,
+            chapter_id=chapter_id,
+            word_count=word_count,
+            compiled_at=datetime.utcnow().isoformat()
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        print(f"Error compiling chapter: {str(e)}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+def generate_chapter_summary(chapter_transcript: list) -> str:
+    """
+    Generate a brief summary of what happened in a chapter for continuity.
+    Uses the last few messages to create a 2-3 sentence summary.
+    """
+    try:
+        # Get the last 3-4 assistant messages (narrative beats)
+        # Handle both Pydantic GameMessage objects and dicts
+        assistant_messages = []
+        for msg in chapter_transcript:
+            # Handle both Pydantic objects and dicts
+            if hasattr(msg, 'role'):  # Pydantic object
+                if msg.role == 'assistant':
+                    assistant_messages.append(msg)
+            elif isinstance(msg, dict):  # Dictionary
+                if msg.get('role') == 'assistant':
+                    assistant_messages.append(msg)
+
+        recent_messages = assistant_messages[-3:] if len(assistant_messages) >= 3 else assistant_messages
+
+        if not recent_messages:
+            return "The adventure continues..."
+
+        # Create a simple summary from the last narrative beats
+        # Extract just the narrative portion (remove stat blocks and action blocks)
+        narrative_parts = []
+        for msg in recent_messages:
+            # Get content from either Pydantic object or dict
+            if hasattr(msg, 'content'):  # Pydantic object
+                content = msg.content
+            else:  # Dictionary
+                content = msg.get('content', '')
+
+            # Remove [ACTIONS] blocks
+            content = re.sub(r'\[ACTIONS\].*?\[/ACTIONS\]', '', content, flags=re.DOTALL)
+            # Remove CHARACTER_STATE blocks
+            content = re.sub(r'---\s*\*\*CHARACTER_STATE:\*\*.*?---', '', content, flags=re.DOTALL)
+            # Remove status displays
+            content = re.sub(r'═+.*?═+', '', content, flags=re.DOTALL)
+            # Clean up extra whitespace
+            content = ' '.join(content.split())
+            if content.strip():
+                narrative_parts.append(content.strip()[:200])  # Limit to 200 chars per beat
+
+        summary = ' '.join(narrative_parts[-2:]) if narrative_parts else "The adventure continues..."
+        return summary[:500]  # Limit total summary to 500 chars
+    except Exception as e:
+        print(f"Error generating chapter summary: {e}")
+        import traceback
+        traceback.print_exc()
+        return "The adventure continues..."
+
+@app.post("/chapters/{chapter_id}/complete")
+async def complete_chapter(chapter_id: str, request: CompleteChapterRequest):
+    """
+    Mark a chapter as complete and optionally create the next chapter.
+
+    - Marks the current chapter status as 'complete'
+    - Generates a narrative summary for continuity
+    - If create_next=True, creates a new chapter with:
+      - Incremented chapter number
+      - Character stats from current chapter's final_state
+      - Previous chapter summary for story continuity
+      - Links previous/next chapter IDs
+    """
+    try:
+        # Get the current chapter
+        chapter = db.get_chapter(chapter_id)
+        if not chapter:
+            raise HTTPException(status_code=404, detail=f"Chapter {chapter_id} not found")
+
+        # Get the book
+        book = db.get_book(chapter.book_id)
+        if not book:
+            raise HTTPException(status_code=404, detail=f"Book {chapter.book_id} not found")
+
+        # Generate a summary of what happened in this chapter
+        chapter_summary = generate_chapter_summary(chapter.game_transcript)
+        print(f"Generated chapter summary: {chapter_summary}")
+
+        # Update the chapter with the summary and mark as complete
+        updated_chapter = db.update_chapter(
+            chapter_id,
+            status='complete',
+            narrative_summary=chapter_summary
+        )
+
+        # Optionally create next chapter
+        next_chapter = None
+        if request.create_next:
+            # Create new chapter with incremented number
+            next_chapter_number = chapter.number + 1
+            next_chapter_title = f"Chapter {next_chapter_number}"
+
+            # Copy character stats from current chapter's final state
+            initial_state = chapter.final_state.copy() if chapter.final_state else chapter.initial_state.copy()
+
+            # Create a new ADK session for the next chapter
+            new_session_state = {
+                # Copy game configuration from book
+                'onboarding_complete': True,
+                'world_template': book.game_config.world.template,
+                'world_name': book.game_config.world.name,
+                'story_mode': book.game_config.mode,
+                'character_class': book.game_config.character.character_class,
+                'character_name': book.game_config.character.name,
+                'tone': book.game_config.tone,
+                # Use stats from previous chapter's final state
+                **initial_state,
+                # CRITICAL: Add previous chapter summary for story continuity
+                'previous_chapter_summary': chapter_summary,
+                'chapter_number': next_chapter_number
+            }
+
+            print(f"DEBUG: Creating new session with state:")
+            print(f"  - chapter_number: {next_chapter_number}")
+            print(f"  - previous_chapter_summary: {chapter_summary[:100]}...")
+            print(f"  - character_name: {new_session_state.get('character_name')}")
+            print(f"  - world_name: {new_session_state.get('world_name')}")
+
+            new_session = await session_service.create_session(
+                app_name='litrealms',
+                user_id=book.user_id,
+                state=new_session_state
+            )
+
+            print(f"DEBUG: New session created with ID: {new_session.id}")
+            print(f"DEBUG: Session state after creation: {new_session.state}")
+
+            # Create new chapter
+            next_chapter = db.create_chapter(
+                book_id=chapter.book_id,
+                title=next_chapter_title,
+                session_id=new_session.id,
+                initial_state=initial_state,
+                previous_chapter_id=chapter_id
+            )
+
+        return {
+            "message": "Chapter marked as complete",
+            "chapter": updated_chapter,
+            "next_chapter": next_chapter,
+            "next_chapter_created": request.create_next
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        print(f"Error completing chapter: {str(e)}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+@app.patch("/chapters/{chapter_id}", response_model=Chapter)
+async def update_chapter_content(
+    chapter_id: str,
+    request: UpdateChapterRequest
+):
+    """
+    Update chapter authored content, title, or status.
+    Used when saving edited chapter content from the Authoring tab.
+    """
+    try:
+        chapter = db.get_chapter(chapter_id)
+        if not chapter:
+            raise HTTPException(status_code=404, detail=f"Chapter {chapter_id} not found")
+
+        # Build updates dict with only provided fields
+        updates = {}
+
+        if request.authored_content is not None:
+            updates['authored_content'] = request.authored_content
+            # Recalculate word count
+            updates['word_count'] = len(request.authored_content.split())
+            updates['last_edited'] = datetime.utcnow().isoformat()
+
+        if request.title is not None:
+            updates['title'] = request.title
+
+        if request.status is not None:
+            updates['status'] = request.status
+
+        # Update chapter in database
+        updated_chapter = db.update_chapter(chapter_id, **updates)
+
+        if not updated_chapter:
+            raise HTTPException(status_code=500, detail="Failed to update chapter")
+
+        return updated_chapter
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        print(f"Error updating chapter: {str(e)}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+@app.delete("/chapters/{chapter_id}")
+async def delete_chapter_endpoint(chapter_id: str):
+    """
+    Delete a chapter and update chapter links.
+    When deleting a middle chapter, links the previous and next chapters together.
+    """
+    try:
+        # Check if chapter exists
+        chapter = db.get_chapter(chapter_id)
+        if not chapter:
+            raise HTTPException(status_code=404, detail=f"Chapter {chapter_id} not found")
+
+        # Delete the chapter
+        success = db.delete_chapter(chapter_id)
+
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to delete chapter")
+
+        return {"message": f"Chapter {chapter_id} deleted successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        print(f"Error deleting chapter: {str(e)}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail={"error": str(e)})
 
 @app.post("/chat", response_model=ChatResponse)
@@ -243,6 +811,14 @@ async def chat(request: ChatRequest):
                 }
             )
 
+        # DEBUG: Log session state before running agent
+        print(f"\nDEBUG CHAT ENDPOINT - Session {session_id}:")
+        print(f"  - chapter_number: {session.state.get('chapter_number')}")
+        print(f"  - previous_chapter_summary: {session.state.get('previous_chapter_summary', 'NOT SET')[:100] if session.state.get('previous_chapter_summary') else 'NOT SET'}")
+        print(f"  - character_name: {session.state.get('character_name')}")
+        print(f"  - onboarding_complete: {session.state.get('onboarding_complete')}")
+        print(f"  - story_started: {session.state.get('story_started')}")
+
         message = types.Content(role='user', parts=[types.Part(text=request.message)])
 
         # Run agent - ADK handles all state persistence automatically!
@@ -264,13 +840,44 @@ async def chat(request: ChatRequest):
         
         # Get final state (ADK has already persisted everything)
         final_session = await session_service.get_session(app_name='litrealms', user_id=user_id, session_id=session_id)
-        
+
         # Merge character state into the session state for frontend display
         if final_session and character_state:
             display_state = {**final_session.state, **character_state}
         else:
             display_state = final_session.state if final_session else {}
-        
+
+        # Update chapter's final_state in database if this is a chapter session
+        chapter = db.get_chapter_by_session_id(session_id)
+        if chapter:
+            # Append new messages to game transcript
+            new_messages = [
+                {
+                    'role': 'user',
+                    'content': request.message,
+                    'timestamp': datetime.utcnow().isoformat()
+                },
+                {
+                    'role': 'assistant',
+                    'content': response_text,
+                    'timestamp': datetime.utcnow().isoformat()
+                }
+            ]
+
+            # Convert existing GameMessage objects to dicts
+            existing_transcript = [
+                msg.model_dump() if hasattr(msg, 'model_dump') else msg
+                for msg in chapter.game_transcript
+            ]
+            updated_transcript = existing_transcript + new_messages
+
+            # Update chapter with new state and transcript
+            db.update_chapter(
+                chapter.id,
+                final_state=json.dumps(display_state),
+                game_transcript=json.dumps(updated_transcript)
+            )
+
         return ChatResponse(
             response=clean_text,
             session_id=session_id,

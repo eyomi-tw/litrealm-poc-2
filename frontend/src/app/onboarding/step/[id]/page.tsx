@@ -21,6 +21,7 @@ export default function OnboardingStepPage({ params }: PageProps) {
   const totalSteps = 4;
 
   const [draftConfig, setDraftConfig] = useState<Partial<GameConfig>>({});
+  const [bookTitle, setBookTitle] = useState<string>('');
   const [canContinue, setCanContinue] = useState(false);
   const [isLaunching, setIsLaunching] = useState(false);
   const [isGeneratingPrologue, setIsGeneratingPrologue] = useState(false);
@@ -33,7 +34,11 @@ export default function OnboardingStepPage({ params }: PageProps) {
     const saved = localStorage.getItem('onboarding_draft');
     if (saved) {
       try {
-        setDraftConfig(JSON.parse(saved));
+        const parsed = JSON.parse(saved);
+        setDraftConfig(parsed);
+        if (parsed.bookTitle) {
+          setBookTitle(parsed.bookTitle);
+        }
       } catch (e) {
         console.error('Failed to load draft config', e);
       }
@@ -110,6 +115,13 @@ export default function OnboardingStepPage({ params }: PageProps) {
     setDraftConfig(updated);
     localStorage.setItem('onboarding_draft', JSON.stringify(updated));
     setCanContinue(true);
+  };
+
+  const handleBookTitleChange = (title: string) => {
+    setBookTitle(title);
+    const updated = { ...draftConfig, bookTitle: title };
+    setDraftConfig(updated);
+    localStorage.setItem('onboarding_draft', JSON.stringify(updated));
   };
 
   // Step 4 specific handlers
@@ -288,7 +300,8 @@ export default function OnboardingStepPage({ params }: PageProps) {
           difficultyModifier: 0,
           autoSave: true,
           narratorSpeed: 'normal'
-        }
+        },
+        bookTitle: bookTitle || undefined  // Include custom book title if provided
       };
 
       // Submit to backend
@@ -297,8 +310,8 @@ export default function OnboardingStepPage({ params }: PageProps) {
       // Clear onboarding data from localStorage
       localStorage.removeItem('onboarding_draft');
 
-      // Navigate to gameplay with session ID
-      router.push(`/gameplay?session=${response.session_id}`);
+      // Navigate to chapter page instead of old gameplay page
+      router.push(`/book/${response.book_id}/chapter/${response.chapter_id}`);
     } catch (error) {
       console.error('Error submitting onboarding:', error);
       alert('Failed to initialize game. Please check that the backend is running.');
@@ -331,6 +344,8 @@ export default function OnboardingStepPage({ params }: PageProps) {
           <StepThree
             initialData={draftConfig.character}
             onDataChange={handleStepThreeData}
+            bookTitle={bookTitle}
+            onBookTitleChange={handleBookTitleChange}
           />
         );
       case 4:

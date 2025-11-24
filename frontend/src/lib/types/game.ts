@@ -152,6 +152,7 @@ export interface GameConfig {
   character: CharacterConfig;
   story: StoryConfig;
   settings: GameSettings;
+  bookTitle?: string; // Optional custom book title (if not provided, auto-generates from character name)
 }
 
 // Onboarding progress
@@ -160,4 +161,53 @@ export interface OnboardingProgress {
   totalSteps: number;
   completedSteps: number[];
   draftConfig: Partial<GameConfig>;
+}
+
+// Book and Chapter Types
+export interface GameMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: string;
+}
+
+export type ChapterStatus = 'draft' | 'in_progress' | 'complete' | 'published';
+
+export interface Chapter {
+  id: string;
+  book_id: string;
+  number: number;
+  title: string;
+  status: ChapterStatus;
+
+  // Gameplay data
+  session_id: string;
+  game_transcript: GameMessage[];
+  initial_state: Record<string, any>;
+  final_state: Record<string, any>;
+
+  // Authoring data
+  authored_content: string;
+  last_edited: string;
+  word_count: number;
+
+  // Continuity
+  previous_chapter_id?: string;
+  next_chapter_id?: string;
+  narrative_summary?: string;
+
+  // Metadata
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Book {
+  id: string;
+  user_id: string;
+  title: string;
+  subtitle?: string;
+  game_config: GameConfig;
+  chapters: Chapter[];
+  created_at: string;
+  updated_at: string;
+  total_word_count: number;
 }

@@ -150,6 +150,7 @@ class GameConfig(BaseModel):
     character: CharacterConfig
     story: StoryConfig
     settings: GameSettings
+    bookTitle: Optional[str] = None  # Optional custom book title (if not provided, auto-generates from character name)
 
 # Story Compilation Models
 class StoryChapter(BaseModel):
@@ -239,3 +240,75 @@ class ContentValidationResponse(BaseModel):
     story_mode: ValidationCategory
     quality_notes: str
     suggested_improvements: str
+
+# Book and Chapter Models
+class GameMessage(BaseModel):
+    role: Literal['user', 'assistant']
+    content: str
+    timestamp: str
+
+class ChapterStatus(BaseModel):
+    status: Literal['draft', 'in_progress', 'complete', 'published']
+
+class Chapter(BaseModel):
+    id: str
+    book_id: str
+    number: int
+    title: str
+    status: Literal['draft', 'in_progress', 'complete', 'published']
+
+    # Gameplay data
+    session_id: str  # ADK session for dungeon master chat
+    game_transcript: List[GameMessage]  # Raw DM conversation
+    initial_state: dict  # Character/world state at chapter start
+    final_state: dict  # Character/world state at chapter end
+
+    # Authoring data
+    authored_content: str  # Refined chapter text for publication
+    last_edited: str
+    word_count: int
+
+    # Continuity
+    previous_chapter_id: Optional[str] = None
+    next_chapter_id: Optional[str] = None
+    narrative_summary: Optional[str] = None  # AI-generated summary for next chapter
+
+    # Metadata
+    created_at: str
+    updated_at: str
+
+class Book(BaseModel):
+    id: str
+    user_id: str
+    title: str
+    subtitle: Optional[str] = None
+    game_config: GameConfig  # Initial onboarding configuration
+    chapters: List[Chapter]
+    created_at: str
+    updated_at: str
+    total_word_count: int = 0
+
+class CreateBookRequest(BaseModel):
+    title: str
+    subtitle: Optional[str] = None
+    game_config: GameConfig
+
+class CreateChapterRequest(BaseModel):
+    book_id: str
+    title: str
+    previous_chapter_id: Optional[str] = None
+
+class UpdateChapterRequest(BaseModel):
+    title: Optional[str] = None
+    status: Optional[Literal['draft', 'in_progress', 'complete', 'published']] = None
+    authored_content: Optional[str] = None
+
+class CompleteChapterRequest(BaseModel):
+    create_next: bool = False  # Whether to auto-create next chapter
+
+class ChapterCompilationResponse(BaseModel):
+    """Response from compiling a chapter's gameplay into authored content"""
+    narrative: str  # Compiled prose narrative
+    chapter_id: str
+    word_count: int
+    compiled_at: str

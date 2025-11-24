@@ -16,6 +16,8 @@ import {
 interface StepThreeProps {
   initialData?: Partial<CharacterConfig>;
   onDataChange: (data: CharacterConfig) => void;
+  bookTitle?: string;
+  onBookTitleChange?: (bookTitle: string) => void;
 }
 
 // Pre-built character templates
@@ -232,13 +234,14 @@ const characterTemplates: CharacterTemplate[] = [
   }
 ];
 
-export default function StepThree({ initialData, onDataChange }: StepThreeProps) {
+export default function StepThree({ initialData, onDataChange, bookTitle, onBookTitleChange }: StepThreeProps) {
   const defaultTemplate = characterTemplates[0]; // Kael Ironfist
   const [selectedTemplate, setSelectedTemplate] = useState<CharacterTemplate>(
     initialData ? characterTemplates.find(t => t.name === initialData.name) || defaultTemplate : defaultTemplate
   );
 
   const [name, setName] = useState(initialData?.name || defaultTemplate.name);
+  const [localBookTitle, setLocalBookTitle] = useState(bookTitle || '');
   const [characterClass, setCharacterClass] = useState<CharacterClass>(initialData?.class || defaultTemplate.class);
   const [role, setRole] = useState<CharacterRole>(initialData?.role || defaultTemplate.role);
   const [alignment, setAlignment] = useState<Alignment>(initialData?.alignment || defaultTemplate.alignment);
@@ -309,6 +312,13 @@ export default function StepThree({ initialData, onDataChange }: StepThreeProps)
   const handleNameChange = (newName: string) => {
     setName(newName);
     updateConfig({ name: newName });
+  };
+
+  const handleBookTitleChange = (newTitle: string) => {
+    setLocalBookTitle(newTitle);
+    if (onBookTitleChange) {
+      onBookTitleChange(newTitle);
+    }
   };
 
   const handleRoleChange = (newRole: CharacterRole) => {
@@ -399,6 +409,21 @@ export default function StepThree({ initialData, onDataChange }: StepThreeProps)
                   className="w-full px-4 py-3 border border-neutral-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-neutral-500"
                   placeholder="Enter character name..."
                 />
+              </div>
+
+              {/* Book Title */}
+              <div>
+                <label className="block text-sm font-medium mb-2">Book Title</label>
+                <input
+                  type="text"
+                  value={localBookTitle}
+                  onChange={(e) => handleBookTitleChange(e.target.value)}
+                  className="w-full px-4 py-3 border border-neutral-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-neutral-500"
+                  placeholder={`${name}'s Adventure`}
+                />
+                <p className="text-xs text-neutral-500 mt-1">
+                  Leave blank to auto-generate from character name
+                </p>
               </div>
 
               {/* Class (Read-only, from template) */}
