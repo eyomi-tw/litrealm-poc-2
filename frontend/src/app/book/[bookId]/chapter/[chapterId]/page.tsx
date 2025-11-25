@@ -139,23 +139,23 @@ export default function ChapterPage({ params }: PageProps) {
     const originalPush = router.push;
     let isNavigating = false;
 
-    router.push = async function(href: string, options?: any) {
+    router.push = async function(href: any, options?: any) {
       // Prevent recursion
       if (isNavigating) {
         return originalPush.call(router, href, options);
       }
 
       const currentUrl = window.location.pathname;
-      const targetUrl = typeof href === 'string' ? href : href.toString();
+      const targetUrl = typeof href === 'string' ? href : String(href);
 
       // Only intercept if navigating away from current page
       if (targetUrl !== currentUrl && !isNavigating) {
-        const confirmLeave = window.confirm(
-          'You have unsaved changes to your authored content. Do you want to save before leaving?'
+        const userChoice = window.confirm(
+          'You have unsaved changes. Click OK to save and leave, or Cancel to stay on this page.'
         );
 
-        if (confirmLeave) {
-          // Save the changes
+        if (userChoice) {
+          // User clicked OK - save and navigate
           if (chapter && !isSaving) {
             try {
               isNavigating = true;
@@ -165,12 +165,7 @@ export default function ChapterPage({ params }: PageProps) {
               return originalPush.call(router, href, options);
             } catch (error) {
               console.error('Error saving chapter:', error);
-              const continueWithoutSaving = window.confirm(
-                'Failed to save. Leave without saving?'
-              );
-              if (continueWithoutSaving) {
-                return originalPush.call(router, href, options);
-              }
+              alert('Failed to save. Please try saving manually before leaving.');
               isNavigating = false;
               return Promise.resolve();
             } finally {
@@ -180,16 +175,7 @@ export default function ChapterPage({ params }: PageProps) {
             return originalPush.call(router, href, options);
           }
         } else {
-          const continueAnyway = window.confirm(
-            'Leave without saving? Your unsaved changes will be lost.'
-          );
-
-          if (continueAnyway) {
-            isNavigating = true;
-            const result = await originalPush.call(router, href, options);
-            isNavigating = false;
-            return result;
-          }
+          // User clicked Cancel - stay on page
           return Promise.resolve();
         }
       }
