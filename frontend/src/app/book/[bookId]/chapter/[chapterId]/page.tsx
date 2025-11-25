@@ -23,7 +23,8 @@ export default function ChapterPage({ params }: PageProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [lastRoll, setLastRoll] = useState<{ dice: string; result: number } | null>(null);
   const [authoredContent, setAuthoredContent] = useState('');
-  const [isCompiling, setIsCompiling] = useState(false);
+  const [isCompilingFull, setIsCompilingFull] = useState(false);
+  const [isCompilingDm, setIsCompilingDm] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string>('');
   const [isCompleting, setIsCompleting] = useState(false);
@@ -178,9 +179,9 @@ export default function ChapterPage({ params }: PageProps) {
   };
 
   const handleCompileChapter = async () => {
-    if (!chapter || isCompiling) return;
+    if (!chapter || isCompilingFull) return;
 
-    setIsCompiling(true);
+    setIsCompilingFull(true);
     try {
       const result = await compileChapter(chapter.id);
       setAuthoredContent(result.narrative);
@@ -191,14 +192,14 @@ export default function ChapterPage({ params }: PageProps) {
       setSaveMessage('❌ Failed to compile chapter. Please try again.');
       setTimeout(() => setSaveMessage(''), 3000);
     } finally {
-      setIsCompiling(false);
+      setIsCompilingFull(false);
     }
   };
 
   const handleCompileDmNarrative = async () => {
-    if (!chapter || isCompiling) return;
+    if (!chapter || isCompilingDm) return;
 
-    setIsCompiling(true);
+    setIsCompilingDm(true);
     try {
       const result = await compileChapterDmNarrative(chapter.id);
       setAuthoredContent(result.narrative);
@@ -209,7 +210,7 @@ export default function ChapterPage({ params }: PageProps) {
       setSaveMessage('❌ Failed to compile DM narrative. Please try again.');
       setTimeout(() => setSaveMessage(''), 3000);
     } finally {
-      setIsCompiling(false);
+      setIsCompilingDm(false);
     }
   };
 
@@ -1013,11 +1014,11 @@ export default function ChapterPage({ params }: PageProps) {
                     {/* Full Compilation Button */}
                     <button
                       onClick={handleCompileChapter}
-                      disabled={isCompiling || !chapter}
+                      disabled={isCompilingFull || isCompilingDm || !chapter}
                       className="w-full px-4 py-2 text-white rounded-lg text-sm hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                       style={{ background: 'linear-gradient(to right, var(--tw-wave-blue), var(--tw-flamingo-pink))' }}
                     >
-                      {isCompiling ? (
+                      {isCompilingFull ? (
                         <>
                           <div className="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
                           <span>Compiling...</span>
@@ -1033,11 +1034,11 @@ export default function ChapterPage({ params }: PageProps) {
                     {/* DM Narrative Only Button */}
                     <button
                       onClick={handleCompileDmNarrative}
-                      disabled={isCompiling || !chapter}
+                      disabled={isCompilingFull || isCompilingDm || !chapter}
                       className="w-full px-4 py-2 text-white rounded-lg text-sm hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                       style={{ background: 'linear-gradient(to right, var(--tw-sapphire-blue), var(--tw-wave-blue))' }}
                     >
-                      {isCompiling ? (
+                      {isCompilingDm ? (
                         <>
                           <div className="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
                           <span>Compiling...</span>
@@ -1051,7 +1052,7 @@ export default function ChapterPage({ params }: PageProps) {
                     </button>
                   </div>
 
-                  {isCompiling && (
+                  {(isCompilingFull || isCompilingDm) && (
                     <p className="text-xs text-gray-600 mt-2">
                       This may take 15-30 seconds. The AI is reading your gameplay and crafting a narrative...
                     </p>
