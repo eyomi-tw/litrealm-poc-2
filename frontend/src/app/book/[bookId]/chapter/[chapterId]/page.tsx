@@ -116,7 +116,7 @@ export default function ChapterPage({ params }: PageProps) {
     }
   }, [authoredContent, originalContent]);
 
-  // Warn before leaving page with unsaved changes
+  // Warn before leaving page with unsaved changes (external navigation)
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       if (hasUnsavedChanges) {
@@ -128,6 +128,40 @@ export default function ChapterPage({ params }: PageProps) {
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [hasUnsavedChanges]);
+
+  // Warn before internal navigation with unsaved changes
+  useEffect(() => {
+    const handleLinkClick = (e: MouseEvent) => {
+      if (!hasUnsavedChanges) return;
+
+      const target = e.target as HTMLElement;
+      const link = target.closest('a');
+
+      if (link && link.href && !link.href.includes(chapterId)) {
+        const confirmLeave = window.confirm(
+          'You have unsaved changes to your authored content. Do you want to save before leaving?'
+        );
+
+        if (confirmLeave) {
+          e.preventDefault();
+          handleSaveChapter().then(() => {
+            window.location.href = link.href;
+          });
+        } else {
+          const continueAnyway = window.confirm(
+            'Leave without saving? Your unsaved changes will be lost.'
+          );
+
+          if (!continueAnyway) {
+            e.preventDefault();
+          }
+        }
+      }
+    };
+
+    document.addEventListener('click', handleLinkClick, true);
+    return () => document.removeEventListener('click', handleLinkClick, true);
+  }, [hasUnsavedChanges, chapterId, handleSaveChapter]);
 
   // Auto-scroll user message to top when new messages arrive
   useEffect(() => {
