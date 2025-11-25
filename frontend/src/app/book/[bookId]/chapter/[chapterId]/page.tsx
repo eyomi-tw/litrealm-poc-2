@@ -4,7 +4,7 @@ import { use, useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Header from '@/components/shared/Header';
 import BottomSheet from '@/components/shared/BottomSheet';
-import { sendChatMessage, ChatResponse, QuickAction, getChapter, compileChapter, compileChapterDmNarrative, updateChapter, completeChapter, deleteChapter, validateContent, ContentValidationResponse, getBook } from '@/lib/api';
+import { sendChatMessage, ChatResponse, QuickAction, getChapter, compileChapter, compileChapterDmNarrative, updateChapter, completeChapter, deleteChapter, validateContent, ContentValidationResponse, getBook, simulateGameplay } from '@/lib/api';
 import { Chapter } from '@/lib/types/game';
 
 interface PageProps {
@@ -40,6 +40,7 @@ export default function ChapterPage({ params }: PageProps) {
   const [showValidationResults, setShowValidationResults] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [originalContent, setOriginalContent] = useState('');
+  const [isSimulating, setIsSimulating] = useState(false);
 
   // Load chapter data
   useEffect(() => {
@@ -293,6 +294,41 @@ export default function ChapterPage({ params }: PageProps) {
       setTimeout(() => setSaveMessage(''), 3000);
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleSimulateGameplay = async () => {
+    if (!chapter || isSimulating) return;
+
+    const confirmSimulate = window.confirm(
+      'This will generate 10-15 AI-simulated gameplay turns and add them to your game transcript. The simulation will continue from your current game state. Continue?'
+    );
+
+    if (!confirmSimulate) return;
+
+    setIsSimulating(true);
+    try {
+      const result = await simulateGameplay(chapter.id);
+
+      // Reload the chapter to show new messages
+      const updatedChapter = await getChapter(chapterId);
+      setChapter(updatedChapter);
+      setMessages(updatedChapter.game_transcript);
+      setGameState(result.final_state);
+
+      setSaveMessage(`🎮 Generated ${result.turns_added} simulated gameplay turns!`);
+      setTimeout(() => setSaveMessage(''), 5000);
+
+      // Scroll to bottom to show new messages
+      setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    } catch (error) {
+      console.error('Error simulating gameplay:', error);
+      setSaveMessage('❌ Failed to simulate gameplay. Please try again.');
+      setTimeout(() => setSaveMessage(''), 3000);
+    } finally {
+      setIsSimulating(false);
     }
   };
 
@@ -722,12 +758,36 @@ export default function ChapterPage({ params }: PageProps) {
             <div className="flex-1 overflow-y-auto px-4 pb-48">
           {/* Chapter Title */}
           <div className="py-6 border-b" style={{ borderColor: 'var(--tw-mist-gray)' }}>
-            <h1 className="text-2xl font-bold headline" style={{ color: 'var(--tw-sapphire-blue)' }}>
-              {chapter.title}
-            </h1>
-            <p className="text-sm text-gray-600 mt-1">
-              Chapter {chapter.number} • {chapter.status}
-            </p>
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex-1">
+                <h1 className="text-2xl font-bold headline" style={{ color: 'var(--tw-sapphire-blue)' }}>
+                  {chapter.title}
+                </h1>
+                <p className="text-sm text-gray-600 mt-1">
+                  Chapter {chapter.number} • {chapter.status}
+                </p>
+              </div>
+              {/* Auto-Generate Gameplay Button */}
+              <button
+                onClick={handleSimulateGameplay}
+                disabled={isSimulating || !chapter}
+                className="px-4 py-2 text-white rounded-lg text-sm hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 whitespace-nowrap"
+                style={{ background: 'linear-gradient(to right, var(--tw-amethyst-purple), var(--tw-flamingo-pink))' }}
+                title="AI generates 10-15 simulated gameplay turns to populate your chapter"
+              >
+                {isSimulating ? (
+                  <>
+                    <div className="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    <span>Simulating...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>🤖</span>
+                    <span>Auto-Generate Session</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
           {/* Chat Messages */}

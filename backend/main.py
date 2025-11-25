@@ -16,6 +16,7 @@ from assistant.agent import root_agent, chat_agent
 from assistant.story_compiler_agent import story_compiler_agent
 from assistant.prologue_generator_agent import prologue_generator_agent
 from assistant.content_validation_agent import content_validation_agent
+from assistant.gameplay_simulator_agent import gameplay_simulator_agent
 from models import (
     GameConfig, CompiledStoryResponse, CompiledStory, StoryMetadata, StoryChapter,
     PrologueGenerationRequest, PrologueGenerationResponse,
@@ -852,6 +853,195 @@ Transform this DM-only transcript into beautiful, flowing LitRPG narrative that 
     except Exception as e:
         import traceback
         print(f"Error compiling chapter DM narrative: {str(e)}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+@app.post("/chapters/{chapter_id}/simulate-gameplay")
+async def simulate_gameplay(chapter_id: str):
+    """
+    Generate a simulated gameplay session (10-15 turns) with realistic player/DM interactions.
+    The simulation continues from the current chapter state and adds messages to the game transcript.
+    """
+    try:
+        # Get chapter and book
+        chapter = db.get_chapter(chapter_id)
+        if not chapter:
+            raise HTTPException(status_code=404, detail=f"Chapter {chapter_id} not found")
+
+        book = db.get_book(chapter.book_id)
+        if not book:
+            raise HTTPException(status_code=404, detail=f"Book {chapter.book_id} not found")
+
+        # Get ADK session to read current game state
+        user_id = "user"
+        session = await session_service.get_session(
+            app_name='litrealms',
+            user_id=user_id,
+            session_id=chapter.session_id
+        )
+
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Game session {chapter.session_id} not found")
+
+        # Build context for the simulator
+        game_state = session.state
+
+        # Get previous chapter summary if this is chapter 2+
+        previous_chapter_summary = ""
+        if chapter.number > 1:
+            previous_chapters = [c for c in book.chapters if c.number == chapter.number - 1]
+            if previous_chapters:
+                previous_chapter_summary = previous_chapters[0].summary or ""
+
+        # Create simulation prompt
+        simulation_prompt = f"""Generate a simulated gameplay session based on this game state:
+
+**CHARACTER INFO:**
+- Name: {game_state.get('character_name', 'Unknown')}
+- Class: {game_state.get('character_class', 'Unknown')}
+- Level: {game_state.get('level', 1)}
+- XP: {game_state.get('xp', 0)}/{game_state.get('xp_to_next_level', 100)}
+- Stats: {json.dumps(game_state.get('character_stats', {}))}
+- Inventory: {json.dumps(game_state.get('inventory', []))}
+
+**WORLD INFO:**
+- World: {game_state.get('world_name', 'Unknown')}
+- Template: {game_state.get('world_template', 'Unknown')}
+- Tone: {game_state.get('world_tone', 'Unknown')}
+
+**STORY INFO:**
+- Mode: {game_state.get('mode', 'Progression')}
+- Narrator Tone: {game_state.get('tone', 'Heroic')}
+- Quest Type: {game_state.get('quest_type', 'Discovery')}
+- Chapter Number: {chapter.number}
+{'- Previous Chapter: ' + previous_chapter_summary if previous_chapter_summary else '- First Chapter'}
+
+Generate a complete, engaging gameplay session with 10-15 player/DM exchange turns."""
+
+        # Create temporary session for simulation
+        sim_session_id = f"sim_{chapter_id}_{uuid.uuid4()}"
+
+        await session_service.create_session(
+            app_name='litrealms_simulator',
+            user_id=user_id,
+            session_id=sim_session_id,
+            state={}
+        )
+
+        # Run Gameplay Simulator Agent
+        simulator_runner = Runner(
+            app_name='litrealms_simulator',
+            agent=gameplay_simulator_agent,
+            session_service=session_service
+        )
+
+        message = types.Content(
+            role='user',
+            parts=[types.Part(text=simulation_prompt)]
+        )
+
+        response_parts = []
+        async for event in simulator_runner.run_async(user_id=user_id, session_id=sim_session_id, new_message=message):
+            if event.content and event.content.parts:
+                for part in event.content.parts:
+                    if hasattr(part, 'text') and part.text:
+                        response_parts.append(part.text)
+
+        simulation_text = ''.join(response_parts)
+
+        # Parse the simulation to extract individual turns
+        # Expected format: Turn N: **PLAYER:** ... **DM:** ... ---CHARACTER_STATE:---
+        turns = []
+        turn_pattern = r'Turn \d+:\s*\*\*PLAYER:\*\*\s*(.+?)\s*\*\*DM:\*\*\s*(.+?)(?=Turn \d+:|SESSION SUMMARY:|$)'
+
+        for match in re.finditer(turn_pattern, simulation_text, re.DOTALL):
+            player_message = match.group(1).strip()
+            dm_response = match.group(2).strip()
+
+            # Clean up DM response to extract CHARACTER_STATE if present
+            state_pattern = r'---\s*\*\*CHARACTER_STATE:\*\*.*?---'
+            state_match = re.search(state_pattern, dm_response, re.DOTALL)
+
+            if state_match:
+                state_block = state_match.group(0)
+                dm_response_clean = re.sub(state_pattern, '', dm_response, flags=re.DOTALL).strip()
+
+                # Parse CHARACTER_STATE
+                _, state_updates = parse_character_state(state_block)
+
+                # Add player turn
+                turns.append({
+                    'role': 'user',
+                    'content': player_message
+                })
+
+                # Add DM turn with state
+                turns.append({
+                    'role': 'assistant',
+                    'content': dm_response_clean,
+                    'state': state_updates if state_updates else None
+                })
+            else:
+                # No state change in this turn
+                turns.append({
+                    'role': 'user',
+                    'content': player_message
+                })
+                turns.append({
+                    'role': 'assistant',
+                    'content': dm_response.strip()
+                })
+
+        if not turns:
+            raise HTTPException(status_code=500, detail="Failed to parse simulated gameplay")
+
+        # Add all simulated turns to the chapter's game transcript
+        for turn in turns:
+            message_obj = GameMessage(
+                role=turn['role'],
+                content=turn['content'],
+                timestamp=datetime.utcnow().isoformat()
+            )
+            chapter.game_transcript.append(message_obj.dict())
+
+            # Update game state if this turn has state changes
+            if 'state' in turn and turn['state']:
+                # Update the ADK session state
+                current_state = session.state.copy()
+                current_state.update(turn['state'])
+
+                await session_service.update_session(
+                    app_name='litrealms',
+                    user_id=user_id,
+                    session_id=chapter.session_id,
+                    state=current_state
+                )
+
+                # Update chapter's final_state
+                chapter.final_state = current_state
+
+        # Save updated chapter with new transcript
+        db.update_chapter_transcript(chapter_id, chapter.game_transcript)
+        db.update_chapter_state(chapter_id, chapter.final_state)
+
+        # Get final session state
+        final_session = await session_service.get_session(
+            app_name='litrealms',
+            user_id=user_id,
+            session_id=chapter.session_id
+        )
+
+        return {
+            "success": True,
+            "message": f"Generated {len(turns)} simulated messages",
+            "turns_added": len(turns),
+            "final_state": final_session.state if final_session else None
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        print(f"Error simulating gameplay: {str(e)}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail={"error": str(e)})
 
 @app.post("/chapters/{chapter_id}/complete")

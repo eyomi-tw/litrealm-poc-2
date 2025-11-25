@@ -259,6 +259,32 @@ def update_chapter(chapter_id: str, **updates) -> Optional[Chapter]:
 
     return get_chapter(chapter_id)
 
+def update_chapter_transcript(chapter_id: str, transcript: list) -> None:
+    """Update a chapter's game_transcript"""
+    conn = sqlite3.connect(DATABASE_PATH)
+    cursor = conn.cursor()
+    now = datetime.utcnow().isoformat()
+
+    cursor.execute(
+        "UPDATE chapters SET game_transcript = ?, updated_at = ? WHERE id = ?",
+        (json.dumps(transcript), now, chapter_id)
+    )
+    conn.commit()
+    conn.close()
+
+def update_chapter_state(chapter_id: str, state: dict) -> None:
+    """Update a chapter's final_state"""
+    conn = sqlite3.connect(DATABASE_PATH)
+    cursor = conn.cursor()
+    now = datetime.utcnow().isoformat()
+
+    cursor.execute(
+        "UPDATE chapters SET final_state = ?, updated_at = ? WHERE id = ?",
+        (json.dumps(state), now, chapter_id)
+    )
+    conn.commit()
+    conn.close()
+
 def get_chapter_by_session_id(session_id: str) -> Optional[Chapter]:
     """Get a chapter by its session_id"""
     conn = sqlite3.connect(DATABASE_PATH)

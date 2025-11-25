@@ -448,6 +448,25 @@ export async function compileChapterDmNarrative(chapterId: string): Promise<Chap
   return response.json();
 }
 
+export interface SimulateGameplayResponse {
+  success: boolean;
+  message: string;
+  turns_added: number;
+  final_state: any;
+}
+
+export async function simulateGameplay(chapterId: string): Promise<SimulateGameplayResponse> {
+  const response = await fetch(`${API_BASE_URL}/chapters/${chapterId}/simulate-gameplay`, {
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to simulate gameplay: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
 export interface UpdateChapterRequest {
   authored_content?: string;
   title?: string;
