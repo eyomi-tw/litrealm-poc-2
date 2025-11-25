@@ -37,6 +37,8 @@ export default function ChapterPage({ params }: PageProps) {
   const [isValidating, setIsValidating] = useState(false);
   const [validationResult, setValidationResult] = useState<ContentValidationResponse | null>(null);
   const [showValidationResults, setShowValidationResults] = useState(false);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [originalContent, setOriginalContent] = useState('');
 
   // Load chapter data
   useEffect(() => {
@@ -68,6 +70,8 @@ export default function ChapterPage({ params }: PageProps) {
 
         // Load authored content
         setAuthoredContent(chapterData.authored_content || '');
+        setOriginalContent(chapterData.authored_content || '');
+        setHasUnsavedChanges(false);
 
         // If no messages, send initial message to start the chapter
         if (chapterData.game_transcript.length === 0) {
@@ -101,6 +105,28 @@ export default function ChapterPage({ params }: PageProps) {
 
     loadChapter();
   }, [chapterId]);
+
+  // Track unsaved changes
+  useEffect(() => {
+    if (originalContent !== null && authoredContent !== originalContent) {
+      setHasUnsavedChanges(true);
+    } else {
+      setHasUnsavedChanges(false);
+    }
+  }, [authoredContent, originalContent]);
+
+  // Warn before leaving page with unsaved changes
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (hasUnsavedChanges) {
+        e.preventDefault();
+        e.returnValue = ''; // Required for Chrome
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasUnsavedChanges]);
 
   // Auto-scroll user message to top when new messages arrive
   useEffect(() => {
@@ -196,6 +222,8 @@ export default function ChapterPage({ params }: PageProps) {
         authored_content: authoredContent
       });
 
+      setOriginalContent(authoredContent);
+      setHasUnsavedChanges(false);
       setSaveMessage('💾 Draft saved successfully!');
       setTimeout(() => setSaveMessage(''), 3000);
     } catch (error) {
@@ -268,6 +296,27 @@ export default function ChapterPage({ params }: PageProps) {
 
   const handleCompleteChapter = async () => {
     if (!chapter || isCompleting) return;
+
+    // Check for unsaved changes
+    if (hasUnsavedChanges) {
+      const confirmComplete = window.confirm(
+        'You have unsaved changes to your authored content. Do you want to save before completing the chapter?'
+      );
+
+      if (confirmComplete) {
+        // Save first, then complete
+        await handleSaveChapter();
+      } else {
+        // User chose not to save, ask if they want to continue anyway
+        const continueAnyway = window.confirm(
+          'Continue without saving? Your unsaved changes will be lost.'
+        );
+
+        if (!continueAnyway) {
+          return; // User cancelled
+        }
+      }
+    }
 
     setIsCompleting(true);
     try {
