@@ -131,69 +131,75 @@ export default function ChapterPage({ params }: PageProps) {
 
   // Warn before internal navigation with unsaved changes
   useEffect(() => {
-    const handleNavigation = async (targetUrl: string) => {
-      const confirmLeave = window.confirm(
-        'You have unsaved changes to your authored content. Do you want to save before leaving?'
-      );
+    if (activeTab !== 'authoring' || !hasUnsavedChanges) {
+      return;
+    }
 
-      if (confirmLeave) {
-        // Save the changes
-        if (chapter && !isSaving) {
-          try {
-            await updateChapter(chapter.id, {
-              authored_content: authoredContent
-            });
-            router.push(targetUrl);
-          } catch (error) {
-            console.error('Error saving chapter:', error);
-            const continueWithoutSaving = window.confirm(
-              'Failed to save. Leave without saving?'
-            );
-            if (continueWithoutSaving) {
-              router.push(targetUrl);
-            }
-          }
-        } else {
-          router.push(targetUrl);
-        }
-      } else {
-        const continueAnyway = window.confirm(
-          'Leave without saving? Your unsaved changes will be lost.'
+    // Override router.push to intercept programmatic navigation
+    const originalPush = router.push;
+    let isNavigating = false;
+
+    router.push = async function(href: string, options?: any) {
+      // Prevent recursion
+      if (isNavigating) {
+        return originalPush.call(router, href, options);
+      }
+
+      const currentUrl = window.location.pathname;
+      const targetUrl = typeof href === 'string' ? href : href.toString();
+
+      // Only intercept if navigating away from current page
+      if (targetUrl !== currentUrl && !isNavigating) {
+        const confirmLeave = window.confirm(
+          'You have unsaved changes to your authored content. Do you want to save before leaving?'
         );
 
-        if (continueAnyway) {
-          router.push(targetUrl);
+        if (confirmLeave) {
+          // Save the changes
+          if (chapter && !isSaving) {
+            try {
+              isNavigating = true;
+              await updateChapter(chapter.id, {
+                authored_content: authoredContent
+              });
+              return originalPush.call(router, href, options);
+            } catch (error) {
+              console.error('Error saving chapter:', error);
+              const continueWithoutSaving = window.confirm(
+                'Failed to save. Leave without saving?'
+              );
+              if (continueWithoutSaving) {
+                return originalPush.call(router, href, options);
+              }
+              isNavigating = false;
+              return Promise.resolve();
+            } finally {
+              isNavigating = false;
+            }
+          } else {
+            return originalPush.call(router, href, options);
+          }
+        } else {
+          const continueAnyway = window.confirm(
+            'Leave without saving? Your unsaved changes will be lost.'
+          );
+
+          if (continueAnyway) {
+            isNavigating = true;
+            const result = await originalPush.call(router, href, options);
+            isNavigating = false;
+            return result;
+          }
+          return Promise.resolve();
         }
       }
+
+      return originalPush.call(router, href, options);
     };
-
-    const handleLinkClick = (e: Event) => {
-      // Only intercept if on authoring tab with unsaved changes
-      if (activeTab !== 'authoring' || !hasUnsavedChanges) return;
-
-      const target = e.target as HTMLElement;
-      const link = target.closest('a');
-
-      if (link && link.href) {
-        const currentUrl = window.location.pathname;
-        const linkUrl = new URL(link.href).pathname;
-
-        // If navigating away from current chapter
-        if (linkUrl !== currentUrl) {
-          e.preventDefault();
-          e.stopPropagation();
-          e.stopImmediatePropagation();
-
-          handleNavigation(linkUrl);
-        }
-      }
-    };
-
-    // Capture phase to intercept before Next.js router
-    document.addEventListener('click', handleLinkClick, { capture: true });
 
     return () => {
-      document.removeEventListener('click', handleLinkClick, { capture: true });
+      // Restore original router.push
+      router.push = originalPush;
     };
   }, [hasUnsavedChanges, activeTab, chapter, isSaving, authoredContent, router]);
 
