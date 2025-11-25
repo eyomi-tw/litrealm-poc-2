@@ -131,29 +131,47 @@ export default function ChapterPage({ params }: PageProps) {
 
   // Warn before internal navigation with unsaved changes
   useEffect(() => {
-    const handleLinkClick = (e: MouseEvent) => {
+    const handleLinkClick = async (e: MouseEvent) => {
       if (!hasUnsavedChanges) return;
 
       const target = e.target as HTMLElement;
       const link = target.closest('a');
 
       if (link && link.href && !link.href.includes(chapterId)) {
+        e.preventDefault();
+
         const confirmLeave = window.confirm(
           'You have unsaved changes to your authored content. Do you want to save before leaving?'
         );
 
         if (confirmLeave) {
-          e.preventDefault();
-          handleSaveChapter().then(() => {
+          // Save the changes
+          if (!chapter || isSaving) {
             window.location.href = link.href;
-          });
+            return;
+          }
+
+          try {
+            await updateChapter(chapter.id, {
+              authored_content: authoredContent
+            });
+            window.location.href = link.href;
+          } catch (error) {
+            console.error('Error saving chapter:', error);
+            const continueWithoutSaving = window.confirm(
+              'Failed to save. Leave without saving?'
+            );
+            if (continueWithoutSaving) {
+              window.location.href = link.href;
+            }
+          }
         } else {
           const continueAnyway = window.confirm(
             'Leave without saving? Your unsaved changes will be lost.'
           );
 
-          if (!continueAnyway) {
-            e.preventDefault();
+          if (continueAnyway) {
+            window.location.href = link.href;
           }
         }
       }
@@ -161,7 +179,7 @@ export default function ChapterPage({ params }: PageProps) {
 
     document.addEventListener('click', handleLinkClick, true);
     return () => document.removeEventListener('click', handleLinkClick, true);
-  }, [hasUnsavedChanges, chapterId, handleSaveChapter]);
+  }, [hasUnsavedChanges, chapterId, chapter, isSaving, authoredContent]);
 
   // Auto-scroll user message to top when new messages arrive
   useEffect(() => {
