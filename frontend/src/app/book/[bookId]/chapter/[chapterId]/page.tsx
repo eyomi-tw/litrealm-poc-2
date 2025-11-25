@@ -131,8 +131,6 @@ export default function ChapterPage({ params }: PageProps) {
 
   // Warn before internal navigation with unsaved changes
   useEffect(() => {
-    if (activeTab !== 'authoring' || !hasUnsavedChanges) return;
-
     const handleNavigation = async (targetUrl: string) => {
       const confirmLeave = window.confirm(
         'You have unsaved changes to your authored content. Do you want to save before leaving?'
@@ -170,6 +168,9 @@ export default function ChapterPage({ params }: PageProps) {
     };
 
     const handleLinkClick = (e: Event) => {
+      // Only intercept if on authoring tab with unsaved changes
+      if (activeTab !== 'authoring' || !hasUnsavedChanges) return;
+
       const target = e.target as HTMLElement;
       const link = target.closest('a');
 
