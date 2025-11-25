@@ -132,46 +132,55 @@ export default function ChapterPage({ params }: PageProps) {
   // Warn before internal navigation with unsaved changes
   useEffect(() => {
     const handleLinkClick = async (e: MouseEvent) => {
-      if (!hasUnsavedChanges) return;
+      // Only check if we're on the authoring tab and have unsaved changes
+      if (activeTab !== 'authoring' || !hasUnsavedChanges) return;
 
       const target = e.target as HTMLElement;
       const link = target.closest('a');
 
-      if (link && link.href && !link.href.includes(chapterId)) {
-        e.preventDefault();
+      // Check if clicking a link that navigates away from current page
+      if (link && link.href) {
+        const currentUrl = window.location.pathname;
+        const linkUrl = new URL(link.href).pathname;
 
-        const confirmLeave = window.confirm(
-          'You have unsaved changes to your authored content. Do you want to save before leaving?'
-        );
+        // If navigating away from current chapter
+        if (linkUrl !== currentUrl) {
+          e.preventDefault();
+          e.stopPropagation();
 
-        if (confirmLeave) {
-          // Save the changes
-          if (!chapter || isSaving) {
-            window.location.href = link.href;
-            return;
-          }
-
-          try {
-            await updateChapter(chapter.id, {
-              authored_content: authoredContent
-            });
-            window.location.href = link.href;
-          } catch (error) {
-            console.error('Error saving chapter:', error);
-            const continueWithoutSaving = window.confirm(
-              'Failed to save. Leave without saving?'
-            );
-            if (continueWithoutSaving) {
-              window.location.href = link.href;
-            }
-          }
-        } else {
-          const continueAnyway = window.confirm(
-            'Leave without saving? Your unsaved changes will be lost.'
+          const confirmLeave = window.confirm(
+            'You have unsaved changes to your authored content. Do you want to save before leaving?'
           );
 
-          if (continueAnyway) {
-            window.location.href = link.href;
+          if (confirmLeave) {
+            // Save the changes
+            if (!chapter || isSaving) {
+              router.push(linkUrl);
+              return;
+            }
+
+            try {
+              await updateChapter(chapter.id, {
+                authored_content: authoredContent
+              });
+              router.push(linkUrl);
+            } catch (error) {
+              console.error('Error saving chapter:', error);
+              const continueWithoutSaving = window.confirm(
+                'Failed to save. Leave without saving?'
+              );
+              if (continueWithoutSaving) {
+                router.push(linkUrl);
+              }
+            }
+          } else {
+            const continueAnyway = window.confirm(
+              'Leave without saving? Your unsaved changes will be lost.'
+            );
+
+            if (continueAnyway) {
+              router.push(linkUrl);
+            }
           }
         }
       }
@@ -179,7 +188,7 @@ export default function ChapterPage({ params }: PageProps) {
 
     document.addEventListener('click', handleLinkClick, true);
     return () => document.removeEventListener('click', handleLinkClick, true);
-  }, [hasUnsavedChanges, chapterId, chapter, isSaving, authoredContent]);
+  }, [hasUnsavedChanges, activeTab, chapter, isSaving, authoredContent, router]);
 
   // Auto-scroll user message to top when new messages arrive
   useEffect(() => {
