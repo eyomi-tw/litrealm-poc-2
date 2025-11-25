@@ -610,6 +610,250 @@ def generate_chapter_summary(chapter_transcript: list) -> str:
         traceback.print_exc()
         return "The adventure continues..."
 
+@app.post("/chapters/{chapter_id}/compile-dm-narrative", response_model=ChapterCompilationResponse)
+async def compile_chapter_dm_narrative(chapter_id: str):
+    """
+    Compile a chapter using ONLY DM (assistant) messages from the gameplay transcript.
+    Only includes stat progression when there are ACTUAL changes (level-ups, new skills, stat increases).
+
+    This creates a cleaner narrative focused on the DM's story without player actions,
+    and filters out redundant stat blocks.
+    """
+    try:
+        # Get chapter with game transcript
+        chapter = db.get_chapter(chapter_id)
+        if not chapter:
+            raise HTTPException(status_code=404, detail=f"Chapter {chapter_id} not found")
+
+        # Get book to access game_config
+        book = db.get_book(chapter.book_id)
+        if not book:
+            raise HTTPException(status_code=404, detail=f"Book {chapter.book_id} not found")
+
+        # Extract ONLY assistant (DM) messages
+        dm_messages = []
+        for msg in chapter.game_transcript:
+            role = msg.role if hasattr(msg, 'role') else msg.get('role')
+            if role == 'assistant':
+                dm_messages.append({
+                    "role": role,
+                    "content": msg.content if hasattr(msg, 'content') else msg.get('content')
+                })
+
+        # Parse CHARACTER_STATE blocks to detect actual stat changes
+        stat_changes = []
+        previous_stats = None
+
+        for msg in dm_messages:
+            # Look for CHARACTER_STATE blocks
+            state_match = re.search(
+                r'---\s*\*\*CHARACTER_STATE:\*\*\s*\n(.+?)\n---',
+                msg['content'],
+                re.DOTALL
+            )
+
+            if state_match:
+                state_text = state_match.group(1)
+
+                # Parse stats from the state text
+                current_stats = {}
+                level_match = re.search(r'Level:\s*(\d+)', state_text)
+                xp_match = re.search(r'XP:\s*(\d+)/(\d+)', state_text)
+                hp_match = re.search(r'HP:\s*(\d+)/(\d+)', state_text)
+                mana_match = re.search(r'Mana:\s*(\d+)/(\d+)', state_text)
+                stats_match = re.search(r'Stats:\s*STR\s*(\d+)\s*INT\s*(\d+)\s*DEX\s*(\d+)\s*CON\s*(\d+)\s*CHA\s*(\d+)', state_text)
+
+                if level_match:
+                    current_stats['level'] = int(level_match.group(1))
+                if xp_match:
+                    current_stats['xp'] = int(xp_match.group(1))
+                    current_stats['xp_to_next_level'] = int(xp_match.group(2))
+                if hp_match:
+                    current_stats['hp'] = int(hp_match.group(1))
+                    current_stats['max_hp'] = int(hp_match.group(2))
+                if mana_match:
+                    current_stats['mana'] = int(mana_match.group(1))
+                    current_stats['max_mana'] = int(mana_match.group(2))
+                if stats_match:
+                    current_stats['str'] = int(stats_match.group(1))
+                    current_stats['int'] = int(stats_match.group(2))
+                    current_stats['dex'] = int(stats_match.group(3))
+                    current_stats['con'] = int(stats_match.group(4))
+                    current_stats['cha'] = int(stats_match.group(5))
+
+                # Detect actual changes
+                if previous_stats:
+                    changes = {}
+
+                    # Level up detection
+                    if current_stats.get('level', 0) > previous_stats.get('level', 0):
+                        changes['level_up'] = True
+                        changes['old_level'] = previous_stats.get('level')
+                        changes['new_level'] = current_stats.get('level')
+
+                    # Stat increases
+                    for stat in ['str', 'int', 'dex', 'con', 'cha']:
+                        if current_stats.get(stat, 0) > previous_stats.get(stat, 0):
+                            if 'stat_increases' not in changes:
+                                changes['stat_increases'] = {}
+                            changes['stat_increases'][stat] = {
+                                'old': previous_stats.get(stat),
+                                'new': current_stats.get(stat)
+                            }
+
+                    # Max HP/Mana increases
+                    if current_stats.get('max_hp', 0) > previous_stats.get('max_hp', 0):
+                        changes['max_hp_increase'] = {
+                            'old': previous_stats.get('max_hp'),
+                            'new': current_stats.get('max_hp')
+                        }
+
+                    if current_stats.get('max_mana', 0) > previous_stats.get('max_mana', 0):
+                        changes['max_mana_increase'] = {
+                            'old': previous_stats.get('max_mana'),
+                            'new': current_stats.get('max_mana')
+                        }
+
+                    if changes:
+                        stat_changes.append({
+                            'message_index': len(stat_changes),
+                            'changes': changes,
+                            'full_state': current_stats
+                        })
+
+                previous_stats = current_stats
+
+        # Format chapter data with DM messages only
+        chapter_data = {
+            "session_history": dm_messages,
+            "initial_state": chapter.initial_state,
+            "final_state": chapter.final_state,
+            "story_mode": book.game_config.mode,
+            "narrator_tone": book.game_config.tone,
+            "world_name": book.game_config.world.name,
+            "character_name": book.game_config.character.name,
+            "character_class": book.game_config.character.character_class,
+            "chapter_number": chapter.number,
+            "chapter_title": chapter.title,
+            "stat_changes": stat_changes  # Only include actual changes
+        }
+
+        # Create prompt for Story Compiler Agent
+        compilation_prompt = f"""Compile this chapter's gameplay into polished LitRPG prose using ONLY DM narration.
+
+CHAPTER INFO:
+- Book Title: {book.title}
+- Chapter: {chapter.number} - {chapter.title}
+- Story Mode: {book.game_config.mode}
+- Narrator Tone: {book.game_config.tone}
+- World: {book.game_config.world.name}
+- Character: {book.game_config.character.name} (Class: {book.game_config.character.character_class})
+
+GAMEPLAY DATA:
+{json.dumps(chapter_data, indent=2)}
+
+SPECIAL INSTRUCTIONS FOR THIS COMPILATION:
+1. **Use ONLY the DM (assistant) messages** - Player actions have been removed
+2. **Preserve ALL Game Mechanics** - This is LitRPG fiction, so keep ALL game elements:
+   - **Dice Rolls**: Keep all dice roll requests and results (d20 rolls, damage rolls, skill checks)
+   - **Combat Mechanics**: Preserve attack rolls, damage calculations, AC checks, saving throws
+   - **Skill Checks**: Keep lockpicking attempts, persuasion checks, perception rolls, stealth rolls with DCs
+   - **XP Gains**: Show experience point awards (e.g., "+15 XP (85/100)")
+   - **Item Acquisitions**: Track loot, treasure, and new equipment gained
+   - **HP/Mana Changes**: Show damage taken, healing received, mana spent
+   - **Status Effects**: Include buffs, debuffs, conditions applied
+3. **Stat Progression Filtering**: The stat_changes array contains ONLY moments where stats actually changed (level-ups, stat increases, max HP/Mana increases)
+   - Display formatted stat blocks ONLY at these significant moments (level-ups, stat increases)
+   - Use elegant LitRPG formatting for stat displays (see Story Compiler Agent instructions for templates)
+   - Do NOT show redundant stat blocks where nothing changed
+   - If stat_changes is empty or a message has no associated change, skip the stat block (but keep other game mechanics!)
+4. **Game Mechanics Formatting**: Format game mechanics elegantly using LitRPG style:
+   - Use inline notation: "▸ +15 XP (85/100)"
+   - Use inline notation: "▸ Damage dealt: 8 HP"
+   - Use inline notation: "▸ Acquired: Iron Sword"
+   - Level-ups should use the formatted template with borders and stat increases
+   - Combat should blend narrative action with formatted results
+5. **Narrative Flow**: Since player actions are removed, bridge the narrative smoothly between DM messages
+   - Where dice rolls occur, integrate them naturally (e.g., "Rolling for attack... the blade connects with a satisfying impact")
+   - Where player choices are implied, narrate the character's decision and action
+6. **Creative Enrichments**: Add internal reflections, doubts, dialogue, and sensory details
+7. **Tone Matching**: Match the {book.game_config.tone} tone
+8. **Story Mode**: Stay true to the {book.game_config.mode} story mode
+9. **Format**: Return ONLY the narrative text (not JSON) - clean prose ready for authored_content
+10. **No Headers**: Do NOT include chapter headers or extra formatting - just the story prose with inline game mechanics
+
+Transform this DM-only transcript into beautiful, flowing LitRPG narrative that preserves all game mechanics (dice rolls, XP, items, damage) while showing stat blocks ONLY when they meaningfully change."""
+
+        # Create temporary session for compilation
+        compile_session_id = f"compile_dm_{chapter_id}"
+        user_id = "user"
+
+        # Check if compile session already exists
+        existing_compile_session = await session_service.get_session(
+            app_name='litrealms_compiler',
+            user_id=user_id,
+            session_id=compile_session_id
+        )
+
+        # Only create the compile session if it doesn't exist
+        if not existing_compile_session:
+            await session_service.create_session(
+                app_name='litrealms_compiler',
+                user_id=user_id,
+                session_id=compile_session_id,
+                state={}
+            )
+
+        # Run Story Compiler Agent
+        compiler_runner = Runner(
+            app_name='litrealms_compiler',
+            agent=story_compiler_agent,
+            session_service=session_service
+        )
+
+        message = types.Content(
+            role='user',
+            parts=[types.Part(text=compilation_prompt)]
+        )
+
+        response_parts = []
+        async for event in compiler_runner.run_async(
+            user_id=user_id,
+            session_id=compile_session_id,
+            new_message=message
+        ):
+            if event.content and event.content.parts:
+                for part in event.content.parts:
+                    if hasattr(part, 'text') and part.text:
+                        response_parts.append(part.text)
+
+        raw_response = ''.join(response_parts).strip()
+
+        # Try to parse as JSON and extract narrative field
+        try:
+            compiled_data = json.loads(raw_response)
+            narrative = compiled_data.get('narrative', raw_response)
+        except json.JSONDecodeError:
+            # If not JSON, use the raw response as narrative
+            narrative = raw_response
+
+        # Calculate word count
+        word_count = len(narrative.split())
+
+        return ChapterCompilationResponse(
+            narrative=narrative,
+            chapter_id=chapter_id,
+            word_count=word_count,
+            compiled_at=datetime.utcnow().isoformat()
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        print(f"Error compiling chapter DM narrative: {str(e)}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
 @app.post("/chapters/{chapter_id}/complete")
 async def complete_chapter(chapter_id: str, request: CompleteChapterRequest):
     """

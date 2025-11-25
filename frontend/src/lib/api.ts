@@ -436,6 +436,18 @@ export async function compileChapter(chapterId: string): Promise<ChapterCompilat
   return response.json();
 }
 
+export async function compileChapterDmNarrative(chapterId: string): Promise<ChapterCompilationResponse> {
+  const response = await fetch(`${API_BASE_URL}/chapters/${chapterId}/compile-dm-narrative`, {
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to compile chapter DM narrative: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
 export interface UpdateChapterRequest {
   authored_content?: string;
   title?: string;

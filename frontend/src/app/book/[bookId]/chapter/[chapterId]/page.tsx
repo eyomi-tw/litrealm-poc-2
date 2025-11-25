@@ -4,7 +4,7 @@ import { use, useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Header from '@/components/shared/Header';
 import BottomSheet from '@/components/shared/BottomSheet';
-import { sendChatMessage, ChatResponse, QuickAction, getChapter, compileChapter, updateChapter, completeChapter, deleteChapter } from '@/lib/api';
+import { sendChatMessage, ChatResponse, QuickAction, getChapter, compileChapter, compileChapterDmNarrative, updateChapter, completeChapter, deleteChapter, validateContent, ContentValidationResponse, getBook } from '@/lib/api';
 import { Chapter } from '@/lib/types/game';
 
 interface PageProps {
@@ -34,6 +34,9 @@ export default function ChapterPage({ params }: PageProps) {
   const hasInitialized = useRef(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isValidating, setIsValidating] = useState(false);
+  const [validationResult, setValidationResult] = useState<ContentValidationResponse | null>(null);
+  const [showValidationResults, setShowValidationResults] = useState(false);
 
   // Load chapter data
   useEffect(() => {
@@ -166,6 +169,24 @@ export default function ChapterPage({ params }: PageProps) {
     }
   };
 
+  const handleCompileDmNarrative = async () => {
+    if (!chapter || isCompiling) return;
+
+    setIsCompiling(true);
+    try {
+      const result = await compileChapterDmNarrative(chapter.id);
+      setAuthoredContent(result.narrative);
+      setSaveMessage(`✨ DM Narrative compiled! ${result.word_count} words generated with stat changes only.`);
+      setTimeout(() => setSaveMessage(''), 3000);
+    } catch (error) {
+      console.error('Error compiling DM narrative:', error);
+      setSaveMessage('❌ Failed to compile DM narrative. Please try again.');
+      setTimeout(() => setSaveMessage(''), 3000);
+    } finally {
+      setIsCompiling(false);
+    }
+  };
+
   const handleSaveChapter = async () => {
     if (!chapter || isSaving) return;
 
@@ -183,6 +204,50 @@ export default function ChapterPage({ params }: PageProps) {
       setTimeout(() => setSaveMessage(''), 3000);
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleValidateContent = async () => {
+    if (!chapter || !authoredContent.trim() || isValidating) return;
+
+    setIsValidating(true);
+    setValidationResult(null);
+    setShowValidationResults(false);
+
+    try {
+      // Fetch book to get game configuration
+      const book = await getBook(bookId);
+
+      // Build validation request
+      const validationRequest = {
+        content: authoredContent,
+        content_type: 'chapter' as const,
+        mode: book.game_config.mode,
+        tone: book.game_config.tone,
+        world_template: book.game_config.world.template,
+        world_name: book.game_config.world.name,
+        magic_system: book.game_config.world.magicSystem,
+        world_tone: book.game_config.world.worldTone,
+        character_name: book.game_config.character.name,
+        character_class: book.game_config.character.class,
+        background: book.game_config.character.background,
+        alignment: book.game_config.character.alignment,
+        character_role: book.game_config.character.role,
+        quest_template: book.game_config.story.questType,
+      };
+
+      const result = await validateContent(validationRequest);
+      setValidationResult(result);
+      setShowValidationResults(true);
+
+      setSaveMessage(`✅ Validation complete! Overall score: ${result.overall_score}/100`);
+      setTimeout(() => setSaveMessage(''), 5000);
+    } catch (error) {
+      console.error('Error validating content:', error);
+      setSaveMessage('❌ Failed to validate content. Please try again.');
+      setTimeout(() => setSaveMessage(''), 3000);
+    } finally {
+      setIsValidating(false);
     }
   };
 
@@ -768,6 +833,123 @@ export default function ChapterPage({ params }: PageProps) {
                   </div>
                 </div>
 
+                {/* Content Validation Section */}
+                <div className="mt-6 p-4 rounded-lg border-2" style={{ background: 'linear-gradient(to right, rgba(242, 97, 122, 0.05), rgba(71, 161, 173, 0.05))', borderColor: 'var(--tw-flamingo-pink)' }}>
+                  <h3 className="font-semibold mb-2 text-sm flex items-center gap-2 headline" style={{ color: 'var(--tw-sapphire-blue)' }}>
+                    <span>🔍</span>
+                    <span>Content Validation</span>
+                  </h3>
+                  <p className="text-sm text-gray-700 mb-3">
+                    Validate your authored content for consistency with world, character, tone, quest, and story mode. Get detailed feedback and quality scores.
+                  </p>
+
+                  <button
+                    onClick={handleValidateContent}
+                    disabled={isValidating || !authoredContent.trim()}
+                    className="w-full px-4 py-2 text-white rounded-lg text-sm hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    style={{ background: 'linear-gradient(to right, var(--tw-flamingo-pink), var(--tw-sapphire-blue))' }}
+                  >
+                    {isValidating ? (
+                      <>
+                        <div className="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                        <span>Validating...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>🔍</span>
+                        <span>Validate Content Quality</span>
+                      </>
+                    )}
+                  </button>
+
+                  {isValidating && (
+                    <p className="text-xs text-gray-600 mt-2">
+                      This may take 15-30 seconds. The AI is analyzing your content for consistency and quality...
+                    </p>
+                  )}
+
+                  {/* Validation Results */}
+                  {showValidationResults && validationResult && (
+                    <div className="mt-4 space-y-3">
+                      {/* Overall Score */}
+                      <div className="p-4 rounded-lg border-2" style={{
+                        background: validationResult.overall_status === 'PASS' ? 'rgba(34, 197, 94, 0.1)' : validationResult.overall_status === 'MINOR_ISSUES' ? 'rgba(251, 191, 36, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                        borderColor: validationResult.overall_status === 'PASS' ? '#22c55e' : validationResult.overall_status === 'MINOR_ISSUES' ? '#fbbf24' : '#ef4444'
+                      }}>
+                        <div className="flex items-center justify-between mb-2">
+                          <h4 className="font-bold text-lg headline" style={{ color: 'var(--tw-sapphire-blue)' }}>
+                            Overall Result: {validationResult.overall_status.replace('_', ' ')}
+                          </h4>
+                          <span className="text-2xl font-bold" style={{
+                            color: validationResult.overall_status === 'PASS' ? '#22c55e' : validationResult.overall_status === 'MINOR_ISSUES' ? '#fbbf24' : '#ef4444'
+                          }}>
+                            {validationResult.overall_score}/100
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Category Scores */}
+                      <div className="space-y-2">
+                        {[
+                          { key: 'world_consistency', label: 'World Consistency', icon: '🌍' },
+                          { key: 'character_consistency', label: 'Character Consistency', icon: '👤' },
+                          { key: 'narrator_tone', label: 'Narrator Tone', icon: '🎭' },
+                          { key: 'quest_alignment', label: 'Quest Alignment', icon: '🎯' },
+                          { key: 'story_mode', label: 'Story Mode', icon: '📚' },
+                        ].map(({ key, label, icon }) => {
+                          const category = validationResult[key as keyof typeof validationResult] as any;
+                          return (
+                            <div key={key} className="p-3 bg-white/50 rounded border" style={{ borderColor: 'var(--tw-mist-gray)' }}>
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-sm font-semibold" style={{ color: 'var(--tw-sapphire-blue)' }}>
+                                  {icon} {label}
+                                </span>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-medium px-2 py-1 rounded" style={{
+                                    background: category.status === 'PASS' ? 'rgba(34, 197, 94, 0.2)' : category.status === 'MINOR_ISSUES' ? 'rgba(251, 191, 36, 0.2)' : 'rgba(239, 68, 68, 0.2)',
+                                    color: category.status === 'PASS' ? '#166534' : category.status === 'MINOR_ISSUES' ? '#92400e' : '#991b1b'
+                                  }}>
+                                    {category.status.replace('_', ' ')}
+                                  </span>
+                                  <span className="text-sm font-bold" style={{ color: 'var(--tw-sapphire-blue)' }}>
+                                    {category.score}/100
+                                  </span>
+                                </div>
+                              </div>
+                              <p className="text-xs text-gray-600 mt-1">{category.feedback}</p>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Quality Notes */}
+                      {validationResult.quality_notes && (
+                        <div className="p-3 bg-white/50 rounded border" style={{ borderColor: 'var(--tw-mist-gray)' }}>
+                          <h5 className="text-sm font-semibold mb-1" style={{ color: 'var(--tw-sapphire-blue)' }}>💡 Quality Notes</h5>
+                          <p className="text-xs text-gray-600">{validationResult.quality_notes}</p>
+                        </div>
+                      )}
+
+                      {/* Suggested Improvements */}
+                      {validationResult.suggested_improvements && validationResult.suggested_improvements !== 'None - content is excellent' && (
+                        <div className="p-3 bg-white/50 rounded border" style={{ borderColor: 'var(--tw-mist-gray)' }}>
+                          <h5 className="text-sm font-semibold mb-1" style={{ color: 'var(--tw-sapphire-blue)' }}>✏️ Suggested Improvements</h5>
+                          <p className="text-xs text-gray-600">{validationResult.suggested_improvements}</p>
+                        </div>
+                      )}
+
+                      {/* Close Button */}
+                      <button
+                        onClick={() => setShowValidationResults(false)}
+                        className="w-full px-3 py-2 text-sm rounded-lg border-2 hover:shadow-md transition-all"
+                        style={{ borderColor: 'var(--tw-wave-blue)', color: 'var(--tw-sapphire-blue)' }}
+                      >
+                        Close Results
+                      </button>
+                    </div>
+                  )}
+                </div>
+
                 {/* AI Compilation Section */}
                 <div className="mt-6 p-4 rounded-lg border-2" style={{ background: 'linear-gradient(to right, rgba(71, 161, 173, 0.1), rgba(242, 97, 122, 0.1))', borderColor: 'var(--tw-wave-blue)' }}>
                   <h3 className="font-semibold mb-2 text-sm flex items-center gap-2 headline" style={{ color: 'var(--tw-sapphire-blue)' }}>
@@ -777,29 +959,62 @@ export default function ChapterPage({ params }: PageProps) {
                   <p className="text-sm text-gray-700 mb-3">
                     Transform your gameplay transcript into polished LitRPG prose. The AI will add creative enrichments including internal reflections, character doubts, sensory details, and dialogue - all while respecting your chosen story mode and narrator tone.
                   </p>
-                  <button
-                    onClick={handleCompileChapter}
-                    disabled={isCompiling || !chapter}
-                    className="px-4 py-2 text-white rounded-lg text-sm hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                    style={{ background: 'linear-gradient(to right, var(--tw-wave-blue), var(--tw-flamingo-pink))' }}
-                  >
-                    {isCompiling ? (
-                      <>
-                        <div className="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                        <span>Compiling...</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>✨</span>
-                        <span>Generate Chapter Content</span>
-                      </>
-                    )}
-                  </button>
+
+                  <div className="space-y-2">
+                    {/* Full Compilation Button */}
+                    <button
+                      onClick={handleCompileChapter}
+                      disabled={isCompiling || !chapter}
+                      className="w-full px-4 py-2 text-white rounded-lg text-sm hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                      style={{ background: 'linear-gradient(to right, var(--tw-wave-blue), var(--tw-flamingo-pink))' }}
+                    >
+                      {isCompiling ? (
+                        <>
+                          <div className="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                          <span>Compiling...</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>✨</span>
+                          <span>Generate Full Chapter (Player + DM)</span>
+                        </>
+                      )}
+                    </button>
+
+                    {/* DM Narrative Only Button */}
+                    <button
+                      onClick={handleCompileDmNarrative}
+                      disabled={isCompiling || !chapter}
+                      className="w-full px-4 py-2 text-white rounded-lg text-sm hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                      style={{ background: 'linear-gradient(to right, var(--tw-sapphire-blue), var(--tw-wave-blue))' }}
+                    >
+                      {isCompiling ? (
+                        <>
+                          <div className="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                          <span>Compiling...</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>📖</span>
+                          <span>Generate DM Narrative + Game Mechanics</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
                   {isCompiling && (
                     <p className="text-xs text-gray-600 mt-2">
                       This may take 15-30 seconds. The AI is reading your gameplay and crafting a narrative...
                     </p>
                   )}
+
+                  <div className="mt-3 p-3 bg-white/50 rounded border text-xs text-gray-600" style={{ borderColor: 'var(--tw-mist-gray)' }}>
+                    <p className="font-semibold mb-1" style={{ color: 'var(--tw-sapphire-blue)' }}>�� Compilation Options:</p>
+                    <ul className="space-y-1 list-disc list-inside">
+                      <li><strong>Full Chapter:</strong> Includes all player actions and DM responses with complete stat tracking</li>
+                      <li><strong>DM Narrative Only:</strong> Uses only DM messages, filters out player actions, shows stats ONLY when they change (level-ups, stat increases)</li>
+                    </ul>
+                  </div>
                 </div>
 
                 {/* Complete Chapter Section */}
