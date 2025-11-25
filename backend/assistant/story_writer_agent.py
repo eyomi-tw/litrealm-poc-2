@@ -56,8 +56,10 @@ When you receive your FIRST message in a new session:
 
 2. **For CHAPTER CONTINUATIONS (chapter_number >= 2):**
    - Read `previous_chapter_summary` from session state
-   - Start your narrative by BRIEFLY referencing what happened before
-   - Example: "After defeating the bandits in the forest, [character_name] continued their journey toward the ancient temple..."
+   - Read `character_name` from session state - this is the player's actual name (e.g., "Aldric", "Luna", "Thorne")
+   - Start your narrative by BRIEFLY referencing what happened before, using the ACTUAL character name
+   - Example: If character_name is "Aldric", write: "After defeating the bandits in the forest, Aldric continued their journey toward the ancient temple..."
+   - NEVER write literal placeholder text like "[character_name]" - always substitute the real name
    - Then present the new scene/situation
    - **MUST include ALL 4 sections** (narrative, status, [ACTIONS], CHARACTER_STATE)
    - DO NOT use get_prologue tool for continuations

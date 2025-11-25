@@ -372,6 +372,34 @@ def delete_book(book_id: str) -> bool:
 
     return deleted_count > 0
 
+def update_book_total_word_count(book_id: str) -> int:
+    """
+    Recalculate and update the book's total_word_count by summing all chapter word counts.
+    Returns the new total word count.
+    """
+    conn = sqlite3.connect(DATABASE_PATH)
+    cursor = conn.cursor()
+
+    # Sum all chapter word counts for this book
+    cursor.execute(
+        "SELECT COALESCE(SUM(word_count), 0) FROM chapters WHERE book_id = ?",
+        (book_id,)
+    )
+    total = cursor.fetchone()[0]
+
+    # Update the book's total_word_count
+    now = datetime.utcnow().isoformat()
+    cursor.execute(
+        "UPDATE books SET total_word_count = ?, updated_at = ? WHERE id = ?",
+        (total, now, book_id)
+    )
+
+    conn.commit()
+    conn.close()
+
+    return total
+
+
 def delete_chapter(chapter_id: str) -> bool:
     """
     Delete a chapter and update chapter links.

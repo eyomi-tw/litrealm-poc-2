@@ -4,7 +4,7 @@ import { use, useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Header from '@/components/shared/Header';
 import BottomSheet from '@/components/shared/BottomSheet';
-import { sendChatMessage, ChatResponse, QuickAction, getChapter, compileChapter, compileChapterDmNarrative, updateChapter, completeChapter, deleteChapter, validateContent, ContentValidationResponse, getBook, simulateGameplay } from '@/lib/api';
+import { sendChatMessage, ChatResponse, QuickAction, getChapter, compileChapter, compileChapterDmNarrative, updateChapter, completeChapter, deleteChapter, validateContent, ContentValidationResponse, getBook, simulateGameplay, generateChapterTitle } from '@/lib/api';
 import { Chapter } from '@/lib/types/game';
 
 interface PageProps {
@@ -41,6 +41,10 @@ export default function ChapterPage({ params }: PageProps) {
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [originalContent, setOriginalContent] = useState('');
   const [isSimulating, setIsSimulating] = useState(false);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [editedTitle, setEditedTitle] = useState('');
+  const [isGeneratingTitle, setIsGeneratingTitle] = useState(false);
+  const titleInputRef = useRef<HTMLInputElement>(null);
 
   // Load chapter data
   useEffect(() => {
@@ -301,7 +305,7 @@ export default function ChapterPage({ params }: PageProps) {
     if (!chapter || isSimulating) return;
 
     const confirmSimulate = window.confirm(
-      'This will generate 10-15 AI-simulated gameplay turns and add them to your game transcript. The simulation will continue from your current game state. Continue?'
+      'This will generate 25-30 AI-simulated gameplay turns and add them to your game transcript. The simulation will continue from your current game state. Continue?'
     );
 
     if (!confirmSimulate) return;
@@ -329,6 +333,62 @@ export default function ChapterPage({ params }: PageProps) {
       setTimeout(() => setSaveMessage(''), 3000);
     } finally {
       setIsSimulating(false);
+    }
+  };
+
+  const handleStartEditingTitle = () => {
+    if (!chapter) return;
+    setEditedTitle(chapter.title);
+    setIsEditingTitle(true);
+    // Focus the input after render
+    setTimeout(() => titleInputRef.current?.focus(), 0);
+  };
+
+  const handleSaveTitle = async () => {
+    if (!chapter || !editedTitle.trim()) return;
+
+    try {
+      await updateChapter(chapter.id, { title: editedTitle.trim() });
+      setChapter({ ...chapter, title: editedTitle.trim() });
+      setIsEditingTitle(false);
+      setSaveMessage('✓ Title updated');
+      setTimeout(() => setSaveMessage(''), 2000);
+    } catch (error) {
+      console.error('Error saving title:', error);
+      setSaveMessage('❌ Failed to save title');
+      setTimeout(() => setSaveMessage(''), 3000);
+    }
+  };
+
+  const handleCancelEditingTitle = () => {
+    setIsEditingTitle(false);
+    setEditedTitle('');
+  };
+
+  const handleGenerateTitle = async () => {
+    if (!chapter || isGeneratingTitle) return;
+
+    setIsGeneratingTitle(true);
+    try {
+      const result = await generateChapterTitle(chapter.id);
+      setEditedTitle(result.generated_title);
+      setIsEditingTitle(true);
+      setSaveMessage('✨ Title generated! Click save to apply.');
+      setTimeout(() => setSaveMessage(''), 3000);
+    } catch (error) {
+      console.error('Error generating title:', error);
+      setSaveMessage('❌ Failed to generate title. Make sure the chapter has content.');
+      setTimeout(() => setSaveMessage(''), 3000);
+    } finally {
+      setIsGeneratingTitle(false);
+    }
+  };
+
+  const handleTitleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleSaveTitle();
+    } else if (e.key === 'Escape') {
+      handleCancelEditingTitle();
     }
   };
 
@@ -760,9 +820,64 @@ export default function ChapterPage({ params }: PageProps) {
           <div className="py-6 border-b" style={{ borderColor: 'var(--tw-mist-gray)' }}>
             <div className="flex items-start justify-between gap-4">
               <div className="flex-1">
-                <h1 className="text-2xl font-bold headline" style={{ color: 'var(--tw-sapphire-blue)' }}>
-                  {chapter.title}
-                </h1>
+                {isEditingTitle ? (
+                  <div className="flex items-center gap-2">
+                    <input
+                      ref={titleInputRef}
+                      type="text"
+                      value={editedTitle}
+                      onChange={(e) => setEditedTitle(e.target.value)}
+                      onKeyDown={handleTitleKeyDown}
+                      className="text-2xl font-bold headline px-2 py-1 border-2 rounded-lg flex-1"
+                      style={{ color: 'var(--tw-sapphire-blue)', borderColor: 'var(--tw-sapphire-blue)' }}
+                      placeholder="Enter chapter title..."
+                    />
+                    <button
+                      onClick={handleSaveTitle}
+                      className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                      title="Save title"
+                    >
+                      ✓
+                    </button>
+                    <button
+                      onClick={handleCancelEditingTitle}
+                      className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                      title="Cancel"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 group">
+                    <h1
+                      className="text-2xl font-bold headline cursor-pointer hover:opacity-80 transition-opacity"
+                      style={{ color: 'var(--tw-sapphire-blue)' }}
+                      onClick={handleStartEditingTitle}
+                      title="Click to edit title"
+                    >
+                      {chapter.title}
+                    </h1>
+                    <button
+                      onClick={handleStartEditingTitle}
+                      className="p-1 text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                      title="Edit title"
+                    >
+                      ✏️
+                    </button>
+                    <button
+                      onClick={handleGenerateTitle}
+                      disabled={isGeneratingTitle}
+                      className="p-1 text-gray-400 hover:text-purple-600 opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
+                      title="Generate title with AI"
+                    >
+                      {isGeneratingTitle ? (
+                        <span className="inline-block animate-spin">⏳</span>
+                      ) : (
+                        '✨'
+                      )}
+                    </button>
+                  </div>
+                )}
                 <p className="text-sm text-gray-600 mt-1">
                   Chapter {chapter.number} • {chapter.status}
                 </p>
@@ -771,9 +886,9 @@ export default function ChapterPage({ params }: PageProps) {
               <button
                 onClick={handleSimulateGameplay}
                 disabled={isSimulating || !chapter}
-                className="px-4 py-2 text-white rounded-lg text-sm hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 whitespace-nowrap"
-                style={{ background: 'linear-gradient(to right, var(--tw-amethyst-purple), var(--tw-flamingo-pink))' }}
-                title="AI generates 10-15 simulated gameplay turns to populate your chapter"
+                className="px-4 py-2 text-white rounded-lg text-sm font-semibold hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 whitespace-nowrap"
+                style={{ background: 'linear-gradient(to right, var(--tw-sapphire-blue), var(--tw-wave-blue))' }}
+                title="AI generates 25-30 simulated gameplay turns to populate your chapter"
               >
                 {isSimulating ? (
                   <>
@@ -932,9 +1047,66 @@ export default function ChapterPage({ params }: PageProps) {
                 {/* Chapter Info */}
                 <div className="mb-6">
                   <div className="flex items-start justify-between mb-2">
-                    <h1 className="text-2xl font-bold headline" style={{ color: 'var(--tw-sapphire-blue)' }}>
-                      {chapter.title}
-                    </h1>
+                    <div className="flex-1">
+                      {isEditingTitle ? (
+                        <div className="flex items-center gap-2">
+                          <input
+                            ref={titleInputRef}
+                            type="text"
+                            value={editedTitle}
+                            onChange={(e) => setEditedTitle(e.target.value)}
+                            onKeyDown={handleTitleKeyDown}
+                            className="text-2xl font-bold headline px-2 py-1 border-2 rounded-lg flex-1"
+                            style={{ color: 'var(--tw-sapphire-blue)', borderColor: 'var(--tw-sapphire-blue)' }}
+                            placeholder="Enter chapter title..."
+                          />
+                          <button
+                            onClick={handleSaveTitle}
+                            className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                            title="Save title"
+                          >
+                            ✓
+                          </button>
+                          <button
+                            onClick={handleCancelEditingTitle}
+                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                            title="Cancel"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 group">
+                          <h1
+                            className="text-2xl font-bold headline cursor-pointer hover:opacity-80 transition-opacity"
+                            style={{ color: 'var(--tw-sapphire-blue)' }}
+                            onClick={handleStartEditingTitle}
+                            title="Click to edit title"
+                          >
+                            {chapter.title}
+                          </h1>
+                          <button
+                            onClick={handleStartEditingTitle}
+                            className="p-1 text-gray-400 hover:text-gray-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="Edit title"
+                          >
+                            ✏️
+                          </button>
+                          <button
+                            onClick={handleGenerateTitle}
+                            disabled={isGeneratingTitle}
+                            className="p-1 text-gray-400 hover:text-purple-600 opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
+                            title="Generate title with AI"
+                          >
+                            {isGeneratingTitle ? (
+                              <span className="inline-block animate-spin">⏳</span>
+                            ) : (
+                              '✨'
+                            )}
+                          </button>
+                        </div>
+                      )}
+                    </div>
                     {/* Status Dropdown */}
                     <select
                       value={chapter.status}

@@ -28,6 +28,55 @@ import database as db
 
 load_dotenv()
 
+def normalize_inventory(inventory):
+    """
+    Ensure inventory is a clean list of strings, unwrapping any nested JSON encoding.
+    This handles cases where inventory might be double or triple JSON encoded.
+    """
+    if inventory is None:
+        return []
+
+    # Keep unwrapping until we have a proper list
+    max_iterations = 5  # Prevent infinite loops
+    for _ in range(max_iterations):
+        if isinstance(inventory, list):
+            # Check if the list contains a single JSON string that needs parsing
+            if len(inventory) == 1 and isinstance(inventory[0], str):
+                try:
+                    parsed = json.loads(inventory[0])
+                    if isinstance(parsed, list):
+                        inventory = parsed
+                        continue
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            # Clean up individual items - remove extra quotes and brackets
+            cleaned = []
+            for item in inventory:
+                if isinstance(item, str):
+                    # Strip leading/trailing brackets and quotes that shouldn't be there
+                    item = item.strip()
+                    while item.startswith('[') or item.startswith('"') or item.startswith("'"):
+                        item = item[1:]
+                    while item.endswith(']') or item.endswith('"') or item.endswith("'"):
+                        item = item[:-1]
+                    item = item.strip()
+                    if item:  # Only add non-empty items
+                        cleaned.append(item)
+                else:
+                    cleaned.append(str(item))
+            return cleaned
+        elif isinstance(inventory, str):
+            # Try to parse as JSON
+            try:
+                inventory = json.loads(inventory)
+            except (json.JSONDecodeError, TypeError):
+                # If it's not valid JSON, treat it as a comma-separated list
+                return [item.strip() for item in inventory.split(',') if item.strip()]
+        else:
+            return []
+
+    return inventory if isinstance(inventory, list) else []
+
 session_service = DatabaseSessionService(db_url="sqlite:///adk_sessions.db")
 runner = Runner(
     app_name='litrealms',
@@ -858,7 +907,7 @@ Transform this DM-only transcript into beautiful, flowing LitRPG narrative that 
 @app.post("/chapters/{chapter_id}/simulate-gameplay")
 async def simulate_gameplay(chapter_id: str):
     """
-    Generate a simulated gameplay session (10-15 turns) with realistic player/DM interactions.
+    Generate a simulated gameplay session (25-30 turns) with realistic player/DM interactions.
     The simulation continues from the current chapter state and adds messages to the game transcript.
     """
     try:
@@ -885,12 +934,11 @@ async def simulate_gameplay(chapter_id: str):
         # Build context for the simulator
         game_state = session.state
 
-        # Get previous chapter summary if this is chapter 2+
-        previous_chapter_summary = ""
-        if chapter.number > 1:
-            previous_chapters = [c for c in book.chapters if c.number == chapter.number - 1]
-            if previous_chapters:
-                previous_chapter_summary = previous_chapters[0].summary or ""
+        # Get previous chapter summary from session state (set when previous chapter was completed)
+        previous_chapter_summary = game_state.get('previous_chapter_summary', '')
+
+        # Normalize inventory to ensure clean format
+        normalized_inventory = normalize_inventory(game_state.get('inventory', []))
 
         # Create simulation prompt
         simulation_prompt = f"""Generate a simulated gameplay session based on this game state:
@@ -901,7 +949,7 @@ async def simulate_gameplay(chapter_id: str):
 - Level: {game_state.get('level', 1)}
 - XP: {game_state.get('xp', 0)}/{game_state.get('xp_to_next_level', 100)}
 - Stats: {json.dumps(game_state.get('character_stats', {}))}
-- Inventory: {json.dumps(game_state.get('inventory', []))}
+- Inventory: {', '.join(normalized_inventory) if normalized_inventory else 'Empty'}
 
 **WORLD INFO:**
 - World: {game_state.get('world_name', 'Unknown')}
@@ -915,7 +963,7 @@ async def simulate_gameplay(chapter_id: str):
 - Chapter Number: {chapter.number}
 {'- Previous Chapter: ' + previous_chapter_summary if previous_chapter_summary else '- First Chapter'}
 
-Generate a complete, engaging gameplay session with 10-15 player/DM exchange turns."""
+Generate a complete, engaging gameplay session with 25-30 player/DM exchange turns."""
 
         # Create temporary session for simulation
         sim_session_id = f"sim_{chapter_id}_{uuid.uuid4()}"
@@ -947,6 +995,23 @@ Generate a complete, engaging gameplay session with 10-15 player/DM exchange tur
                         response_parts.append(part.text)
 
         simulation_text = ''.join(response_parts)
+
+        # Post-process to replace any placeholder text the model might have outputted
+        character_name = game_state.get('character_name', 'Hero')
+        world_name = game_state.get('world_name', 'the realm')
+        # Replace various placeholder patterns
+        placeholder_replacements = [
+            (r'\[character_name\]', character_name),
+            (r'\[Character_Name\]', character_name),
+            (r'\[CHARACTER_NAME\]', character_name),
+            (r'\[world_name\]', world_name),
+            (r'\[World_Name\]', world_name),
+            (r'\[WORLD_NAME\]', world_name),
+            (r'character_name\]', character_name),  # Partial placeholder
+            (r'\[character_name', character_name),  # Partial placeholder
+        ]
+        for pattern, replacement in placeholder_replacements:
+            simulation_text = re.sub(pattern, replacement, simulation_text, flags=re.IGNORECASE)
 
         # Parse the simulation to extract individual turns
         # Expected format: Turn N: **PLAYER:** ... **DM:** ... ---CHARACTER_STATE:---
@@ -995,46 +1060,55 @@ Generate a complete, engaging gameplay session with 10-15 player/DM exchange tur
             raise HTTPException(status_code=500, detail="Failed to parse simulated gameplay")
 
         # Add all simulated turns to the chapter's game transcript
+        # Track cumulative state changes
+        accumulated_state = session.state.copy()
+
+        # Convert existing transcript to dicts if they're GameMessage objects
+        transcript_as_dicts = []
+        for msg in chapter.game_transcript:
+            if hasattr(msg, 'model_dump'):
+                transcript_as_dicts.append(msg.model_dump())
+            elif hasattr(msg, 'dict'):
+                transcript_as_dicts.append(msg.dict())
+            else:
+                transcript_as_dicts.append(msg)
+
         for turn in turns:
-            message_obj = GameMessage(
-                role=turn['role'],
-                content=turn['content'],
-                timestamp=datetime.utcnow().isoformat()
-            )
-            chapter.game_transcript.append(message_obj.dict())
+            message_dict = {
+                'role': turn['role'],
+                'content': turn['content'],
+                'timestamp': datetime.utcnow().isoformat()
+            }
+            transcript_as_dicts.append(message_dict)
 
-            # Update game state if this turn has state changes
+            # Accumulate game state changes
             if 'state' in turn and turn['state']:
-                # Update the ADK session state
-                current_state = session.state.copy()
-                current_state.update(turn['state'])
+                state_updates = turn['state']
+                # Normalize inventory if present to prevent nested JSON encoding
+                if 'inventory' in state_updates:
+                    state_updates['inventory'] = normalize_inventory(state_updates['inventory'])
+                # Deep merge character_stats instead of replacing
+                if 'character_stats' in state_updates and 'character_stats' in accumulated_state:
+                    accumulated_state['character_stats'].update(state_updates['character_stats'])
+                    del state_updates['character_stats']  # Don't overwrite with partial dict
+                accumulated_state.update(state_updates)
 
-                await session_service.update_session(
-                    app_name='litrealms',
-                    user_id=user_id,
-                    session_id=chapter.session_id,
-                    state=current_state
-                )
+        # Normalize inventory one more time before saving to ensure clean state
+        if 'inventory' in accumulated_state:
+            accumulated_state['inventory'] = normalize_inventory(accumulated_state['inventory'])
 
-                # Update chapter's final_state
-                chapter.final_state = current_state
+        # Update chapter's final_state with all accumulated changes
+        chapter.final_state = accumulated_state
 
-        # Save updated chapter with new transcript
-        db.update_chapter_transcript(chapter_id, chapter.game_transcript)
+        # Save updated chapter with new transcript and final state
+        db.update_chapter_transcript(chapter_id, transcript_as_dicts)
         db.update_chapter_state(chapter_id, chapter.final_state)
-
-        # Get final session state
-        final_session = await session_service.get_session(
-            app_name='litrealms',
-            user_id=user_id,
-            session_id=chapter.session_id
-        )
 
         return {
             "success": True,
             "message": f"Generated {len(turns)} simulated messages",
             "turns_added": len(turns),
-            "final_state": final_session.state if final_session else None
+            "final_state": accumulated_state
         }
 
     except HTTPException:
@@ -1089,7 +1163,29 @@ async def complete_chapter(chapter_id: str, request: CompleteChapterRequest):
             # Copy character stats from current chapter's final state
             initial_state = chapter.final_state.copy() if chapter.final_state else chapter.initial_state.copy()
 
+            # DEBUG: Log what we're copying
+            print(f"DEBUG: Copying state from chapter {chapter.number} to chapter {next_chapter_number}")
+            print(f"  - chapter.final_state exists: {chapter.final_state is not None}")
+            print(f"  - Using final_state: {chapter.final_state is not None and bool(chapter.final_state)}")
+            print(f"  - level in initial_state: {initial_state.get('level')}")
+            print(f"  - xp in initial_state: {initial_state.get('xp')}")
+            print(f"  - character_stats in initial_state: {initial_state.get('character_stats')}")
+            print(f"  - inventory in initial_state: {initial_state.get('inventory')}")
+
             # Create a new ADK session for the next chapter
+            # First, clean up initial_state to remove chapter-1-specific fields
+            # that would confuse the story_writer_agent
+            cleaned_state = initial_state.copy()
+            # Remove prologue/opening scene - these are for chapter 1 only
+            # The agent should use previous_chapter_summary for continuations
+            fields_to_remove = ['opening_scene', 'prologue', 'story_started']
+            for field in fields_to_remove:
+                cleaned_state.pop(field, None)
+
+            # Normalize inventory to prevent nested JSON encoding issues
+            if 'inventory' in cleaned_state:
+                cleaned_state['inventory'] = normalize_inventory(cleaned_state['inventory'])
+
             new_session_state = {
                 # Copy game configuration from book
                 'onboarding_complete': True,
@@ -1099,18 +1195,23 @@ async def complete_chapter(chapter_id: str, request: CompleteChapterRequest):
                 'character_class': book.game_config.character.character_class,
                 'character_name': book.game_config.character.name,
                 'tone': book.game_config.tone,
-                # Use stats from previous chapter's final state
-                **initial_state,
+                # Use cleaned stats from previous chapter's final state
+                **cleaned_state,
                 # CRITICAL: Add previous chapter summary for story continuity
                 'previous_chapter_summary': chapter_summary,
-                'chapter_number': next_chapter_number
+                'chapter_number': next_chapter_number,
+                # Explicitly mark that this is NOT a fresh start
+                'story_started': True
             }
 
-            print(f"DEBUG: Creating new session with state:")
+            print(f"DEBUG: Creating new session for chapter {next_chapter_number}:")
             print(f"  - chapter_number: {next_chapter_number}")
             print(f"  - previous_chapter_summary: {chapter_summary[:100]}...")
             print(f"  - character_name: {new_session_state.get('character_name')}")
             print(f"  - world_name: {new_session_state.get('world_name')}")
+            print(f"  - story_started: {new_session_state.get('story_started')}")
+            print(f"  - prologue: {new_session_state.get('prologue', 'NOT SET (correct for chapter 2+)')}")
+            print(f"  - opening_scene: {new_session_state.get('opening_scene', 'NOT SET (correct for chapter 2+)')}")
 
             new_session = await session_service.create_session(
                 app_name='litrealms',
@@ -1142,6 +1243,83 @@ async def complete_chapter(chapter_id: str, request: CompleteChapterRequest):
     except Exception as e:
         import traceback
         print(f"Error completing chapter: {str(e)}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+@app.post("/chapters/{chapter_id}/generate-title")
+async def generate_chapter_title(chapter_id: str):
+    """
+    Generate an AI-suggested title for a chapter based on its content.
+    Uses the game transcript and/or authored content to create a fitting title.
+    """
+    try:
+        chapter = db.get_chapter(chapter_id)
+        if not chapter:
+            raise HTTPException(status_code=404, detail=f"Chapter {chapter_id} not found")
+
+        # Build context from chapter content
+        content_context = ""
+
+        # Use authored content if available
+        if chapter.authored_content and chapter.authored_content.strip():
+            content_context = chapter.authored_content[:2000]  # Limit to first 2000 chars
+        # Fall back to game transcript
+        elif chapter.game_transcript:
+            # Extract key narrative moments from transcript
+            narrative_parts = []
+            for msg in chapter.game_transcript:
+                if msg.role == 'assistant':
+                    # Clean content for title generation
+                    content = msg.content
+                    # Remove CHARACTER_STATE blocks
+                    content = re.sub(r'---\s*\*\*CHARACTER_STATE:\*\*.*?---', '', content, flags=re.DOTALL)
+                    # Remove action blocks
+                    content = re.sub(r'\[ACTIONS\].*?\[/ACTIONS\]', '', content, flags=re.DOTALL)
+                    if content.strip():
+                        narrative_parts.append(content.strip()[:300])
+            content_context = ' '.join(narrative_parts[:5])  # Use first 5 DM messages
+
+        if not content_context:
+            raise HTTPException(status_code=400, detail="Chapter has no content to generate a title from")
+
+        # Create a simple prompt for title generation
+        title_prompt = f"""Based on the following chapter content, generate a compelling and evocative chapter title.
+The title should be:
+- Short (2-6 words)
+- Capture the main theme, action, or mood of the chapter
+- Be intriguing and fit a fantasy/LitRPG style
+- NOT include "Chapter" or chapter numbers
+
+Content:
+{content_context}
+
+Respond with ONLY the title, nothing else."""
+
+        # Use Gemini directly for simple title generation
+        from google import genai
+        import os
+
+        client = genai.Client(api_key=os.getenv('GOOGLE_API_KEY'))
+        response = client.models.generate_content(
+            model='gemini-2.0-flash',
+            contents=title_prompt
+        )
+
+        generated_title = response.text.strip().strip('"').strip("'")
+
+        # Limit title length
+        if len(generated_title) > 100:
+            generated_title = generated_title[:100]
+
+        return {
+            "success": True,
+            "generated_title": generated_title
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        print(f"Error generating chapter title: {str(e)}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail={"error": str(e)})
 
 @app.patch("/chapters/{chapter_id}", response_model=Chapter)
@@ -1179,6 +1357,10 @@ async def update_chapter_content(
         if not updated_chapter:
             raise HTTPException(status_code=500, detail="Failed to update chapter")
 
+        # Update book's total word count if chapter word count changed
+        if 'word_count' in updates:
+            db.update_book_total_word_count(chapter.book_id)
+
         return updated_chapter
 
     except HTTPException:
@@ -1200,11 +1382,17 @@ async def delete_chapter_endpoint(chapter_id: str):
         if not chapter:
             raise HTTPException(status_code=404, detail=f"Chapter {chapter_id} not found")
 
+        # Store book_id before deleting
+        book_id = chapter.book_id
+
         # Delete the chapter
         success = db.delete_chapter(chapter_id)
 
         if not success:
             raise HTTPException(status_code=500, detail="Failed to delete chapter")
+
+        # Update book's total word count after chapter deletion
+        db.update_book_total_word_count(book_id)
 
         return {"message": f"Chapter {chapter_id} deleted successfully"}
 

@@ -489,6 +489,23 @@ export async function updateChapter(chapterId: string, updates: UpdateChapterReq
   return response.json();
 }
 
+export interface GenerateTitleResponse {
+  success: boolean;
+  generated_title: string;
+}
+
+export async function generateChapterTitle(chapterId: string): Promise<GenerateTitleResponse> {
+  const response = await fetch(`${API_BASE_URL}/chapters/${chapterId}/generate-title`, {
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to generate title: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
 export interface CompleteChapterResponse {
   message: string;
   chapter: any;
