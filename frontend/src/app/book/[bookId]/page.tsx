@@ -3,7 +3,7 @@
 import { use, useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Header from '@/components/shared/Header';
-import { getBook, updateBook, deleteChapter, type BookResponse } from '@/lib/api';
+import { getBook, updateBook, deleteChapter, validateBook, type BookResponse, type BookValidationResponse } from '@/lib/api';
 
 interface PageProps {
   params: Promise<{ bookId: string }>;
@@ -24,6 +24,9 @@ export default function BookOverviewPage({ params }: PageProps) {
   const [chapterToDelete, setChapterToDelete] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string>('');
+  const [isValidating, setIsValidating] = useState(false);
+  const [validationResults, setValidationResults] = useState<BookValidationResponse | null>(null);
+  const [isValidationModalOpen, setIsValidationModalOpen] = useState(false);
 
   useEffect(() => {
     const loadBook = async () => {
@@ -132,6 +135,45 @@ export default function BookOverviewPage({ params }: PageProps) {
       setTimeout(() => setError(null), 3000);
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  const handleValidateBook = async () => {
+    if (!book || book.chapters.length < 2) return;
+
+    try {
+      setIsValidating(true);
+      const results = await validateBook(bookId);
+      setValidationResults(results);
+      setIsValidationModalOpen(true);
+    } catch (err) {
+      console.error('Error validating book:', err);
+      setError('Failed to validate book. Please try again.');
+      setTimeout(() => setError(null), 3000);
+    } finally {
+      setIsValidating(false);
+    }
+  };
+
+  const getValidationStatusColor = (status: 'PASS' | 'MINOR_ISSUES' | 'FAIL') => {
+    switch (status) {
+      case 'PASS':
+        return { bg: 'var(--tw-jade-green)', text: 'white' };
+      case 'MINOR_ISSUES':
+        return { bg: '#F59E0B', text: 'white' };
+      case 'FAIL':
+        return { bg: 'var(--tw-flamingo-pink)', text: 'white' };
+    }
+  };
+
+  const getValidationStatusLabel = (status: 'PASS' | 'MINOR_ISSUES' | 'FAIL') => {
+    switch (status) {
+      case 'PASS':
+        return '✓ Excellent';
+      case 'MINOR_ISSUES':
+        return '⚠ Good';
+      case 'FAIL':
+        return '✗ Needs Work';
     }
   };
 
@@ -423,6 +465,42 @@ export default function BookOverviewPage({ params }: PageProps) {
             >
               Back to Home
             </button>
+            {book.chapters.length > 0 && book.chapters.some(ch => ch.authored_content && ch.authored_content.trim().length > 0) && (
+              <button
+                onClick={() => router.push(`/book/${bookId}/read`)}
+                className="px-6 py-3 bg-white hover:shadow-md rounded-lg transition-all border-2 font-semibold flex items-center gap-2"
+                style={{ borderColor: 'var(--tw-jade-green)', color: 'var(--tw-jade-green)' }}
+                title="Open book in reading mode"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                </svg>
+                Read Book
+              </button>
+            )}
+            {book.chapters.length >= 2 && (
+              <button
+                onClick={handleValidateBook}
+                disabled={isValidating}
+                className="px-6 py-3 bg-white hover:shadow-md rounded-lg transition-all border-2 font-semibold disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                style={{ borderColor: 'var(--tw-amethyst-purple)', color: 'var(--tw-amethyst-purple)' }}
+                title="Validate book for cross-chapter consistency"
+              >
+                {isValidating ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2" style={{ borderColor: 'var(--tw-amethyst-purple)' }}></div>
+                    Validating...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    Validate Book
+                  </>
+                )}
+              </button>
+            )}
             {book.chapters.length > 0 && (
               <button
                 onClick={() => {
@@ -536,6 +614,252 @@ export default function BookOverviewPage({ params }: PageProps) {
                   style={{ backgroundColor: 'var(--tw-flamingo-pink)' }}
                 >
                   {isDeleting ? 'Deleting...' : 'Delete Chapter'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Book Validation Modal */}
+        {isValidationModalOpen && validationResults && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
+            <div className="bg-white rounded-xl p-6 max-w-4xl w-full shadow-2xl my-8 max-h-[90vh] overflow-y-auto">
+              {/* Modal Header */}
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-full flex items-center justify-center" style={{ backgroundColor: 'rgba(99, 79, 125, 0.1)' }}>
+                    <svg className="w-6 h-6" style={{ color: 'var(--tw-amethyst-purple)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-bold headline" style={{ color: 'var(--tw-sapphire-blue)' }}>Book Validation Results</h2>
+                    <p className="text-sm text-gray-600">Cross-chapter consistency analysis</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsValidationModalOpen(false)}
+                  className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
+                  style={{ color: 'var(--tw-sapphire-blue)' }}
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Overall Score */}
+              <div className="mb-6 p-4 rounded-xl border-2" style={{ borderColor: 'var(--tw-amethyst-purple)', backgroundColor: 'rgba(99, 79, 125, 0.05)' }}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-medium text-gray-600 mb-1">Overall Score</div>
+                    <div className="text-4xl font-bold headline" style={{ color: 'var(--tw-sapphire-blue)' }}>
+                      {validationResults.overall_score}/100
+                    </div>
+                  </div>
+                  <div
+                    className="px-4 py-2 rounded-full text-sm font-bold"
+                    style={{
+                      backgroundColor: getValidationStatusColor(validationResults.overall_status).bg,
+                      color: getValidationStatusColor(validationResults.overall_status).text
+                    }}
+                  >
+                    {getValidationStatusLabel(validationResults.overall_status)}
+                  </div>
+                </div>
+              </div>
+
+              {/* Category Scores Grid */}
+              <div className="mb-6">
+                <h3 className="text-lg font-bold mb-4 headline" style={{ color: 'var(--tw-sapphire-blue)' }}>Validation Categories</h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {[
+                    { label: 'Character', data: validationResults.character_continuity, icon: '👤' },
+                    { label: 'World', data: validationResults.world_continuity, icon: '🌍' },
+                    { label: 'Plot', data: validationResults.plot_continuity, icon: '📖' },
+                    { label: 'Timeline', data: validationResults.timeline_consistency, icon: '⏱️' },
+                    { label: 'Items', data: validationResults.item_tracking, icon: '🎒' },
+                    { label: 'Stats', data: validationResults.stat_progression, icon: '📊' },
+                    { label: 'Tone', data: validationResults.tone_consistency, icon: '🎭' },
+                    { label: 'Arc', data: validationResults.narrative_arc, icon: '📈' }
+                  ].map(({ label, data, icon }) => (
+                    <div
+                      key={label}
+                      className="p-3 rounded-lg border-2 bg-white hover:shadow-md transition-all"
+                      style={{ borderColor: 'var(--tw-wave-blue)' }}
+                    >
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-lg">{icon}</span>
+                        <span className="text-xs font-semibold text-gray-600">{label}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span
+                          className="text-2xl font-bold"
+                          style={{
+                            color: data.status === 'PASS' ? 'var(--tw-jade-green)' :
+                                   data.status === 'MINOR_ISSUES' ? '#F59E0B' :
+                                   'var(--tw-flamingo-pink)'
+                          }}
+                        >
+                          {data.score}
+                        </span>
+                        <span
+                          className="px-2 py-0.5 rounded text-xs font-semibold"
+                          style={{
+                            backgroundColor: getValidationStatusColor(data.status).bg,
+                            color: getValidationStatusColor(data.status).text
+                          }}
+                        >
+                          {data.status.replace('_', ' ')}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Detailed Feedback */}
+              <div className="mb-6">
+                <h3 className="text-lg font-bold mb-4 headline" style={{ color: 'var(--tw-sapphire-blue)' }}>Detailed Feedback</h3>
+                <div className="space-y-3">
+                  {[
+                    { label: 'Character Continuity', data: validationResults.character_continuity },
+                    { label: 'World Continuity', data: validationResults.world_continuity },
+                    { label: 'Plot Continuity', data: validationResults.plot_continuity },
+                    { label: 'Timeline Consistency', data: validationResults.timeline_consistency },
+                    { label: 'Item Tracking', data: validationResults.item_tracking },
+                    { label: 'Stat Progression', data: validationResults.stat_progression },
+                    { label: 'Tone Consistency', data: validationResults.tone_consistency },
+                    { label: 'Narrative Arc', data: validationResults.narrative_arc }
+                  ].filter(({ data }) => data.issues_found.length > 0 || data.status !== 'PASS').map(({ label, data }) => (
+                    <div
+                      key={label}
+                      className="p-4 rounded-lg border bg-gray-50"
+                      style={{ borderColor: 'var(--tw-mist-gray)' }}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="font-semibold text-sm" style={{ color: 'var(--tw-sapphire-blue)' }}>{label}</span>
+                        <span
+                          className="px-2 py-0.5 rounded text-xs font-semibold"
+                          style={{
+                            backgroundColor: getValidationStatusColor(data.status).bg,
+                            color: getValidationStatusColor(data.status).text
+                          }}
+                        >
+                          {data.score}/100
+                        </span>
+                      </div>
+                      <p className="text-sm text-gray-700 mb-2">{data.feedback}</p>
+                      {data.issues_found.length > 0 && (
+                        <ul className="list-disc list-inside text-sm text-gray-600 space-y-1">
+                          {data.issues_found.map((issue, idx) => (
+                            <li key={idx}>{issue}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Cross-Chapter Issues */}
+              {validationResults.cross_chapter_issues.length > 0 && (
+                <div className="mb-6">
+                  <h3 className="text-lg font-bold mb-4 headline" style={{ color: 'var(--tw-sapphire-blue)' }}>Cross-Chapter Issues</h3>
+                  <div className="p-4 rounded-lg border-2 bg-yellow-50" style={{ borderColor: '#F59E0B' }}>
+                    <ul className="list-disc list-inside text-sm text-gray-700 space-y-2">
+                      {validationResults.cross_chapter_issues.map((issue, idx) => (
+                        <li key={idx}>{issue}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              )}
+
+              {/* Suggested Fixes */}
+              {validationResults.suggested_fixes.length > 0 && (
+                <div className="mb-6">
+                  <h3 className="text-lg font-bold mb-4 headline" style={{ color: 'var(--tw-sapphire-blue)' }}>Suggested Fixes</h3>
+                  <div className="p-4 rounded-lg border-2 bg-green-50" style={{ borderColor: 'var(--tw-jade-green)' }}>
+                    <ol className="list-decimal list-inside text-sm text-gray-700 space-y-2">
+                      {validationResults.suggested_fixes.map((fix, idx) => (
+                        <li key={idx}>{fix}</li>
+                      ))}
+                    </ol>
+                  </div>
+                </div>
+              )}
+
+              {/* Continuity Tracker */}
+              <div className="mb-6">
+                <h3 className="text-lg font-bold mb-4 headline" style={{ color: 'var(--tw-sapphire-blue)' }}>Continuity Tracker</h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {/* Characters */}
+                  <div className="p-4 rounded-lg border-2" style={{ borderColor: 'var(--tw-wave-blue)' }}>
+                    <h4 className="font-semibold text-sm mb-3" style={{ color: 'var(--tw-sapphire-blue)' }}>Characters Introduced</h4>
+                    {validationResults.continuity_tracker.characters_introduced.length > 0 ? (
+                      <ul className="text-sm text-gray-700 space-y-1">
+                        {validationResults.continuity_tracker.characters_introduced.map((char, idx) => (
+                          <li key={idx} className="flex justify-between">
+                            <span>{char.name}</span>
+                            <span className="text-gray-500">Ch. {char.first_appearance_chapter}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-sm text-gray-500">No characters tracked</p>
+                    )}
+                  </div>
+
+                  {/* Key Items */}
+                  <div className="p-4 rounded-lg border-2" style={{ borderColor: 'var(--tw-wave-blue)' }}>
+                    <h4 className="font-semibold text-sm mb-3" style={{ color: 'var(--tw-sapphire-blue)' }}>Key Items</h4>
+                    {validationResults.continuity_tracker.key_items.length > 0 ? (
+                      <ul className="text-sm text-gray-700 space-y-1">
+                        {validationResults.continuity_tracker.key_items.map((item, idx) => (
+                          <li key={idx} className="flex justify-between items-center">
+                            <span>{item.name}</span>
+                            <span className={`text-xs px-2 py-0.5 rounded ${
+                              item.status === 'acquired' ? 'bg-green-100 text-green-800' :
+                              item.status === 'lost' ? 'bg-red-100 text-red-800' :
+                              'bg-gray-100 text-gray-800'
+                            }`}>
+                              {item.status}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-sm text-gray-500">No items tracked</p>
+                    )}
+                  </div>
+
+                  {/* Major Events */}
+                  <div className="p-4 rounded-lg border-2" style={{ borderColor: 'var(--tw-wave-blue)' }}>
+                    <h4 className="font-semibold text-sm mb-3" style={{ color: 'var(--tw-sapphire-blue)' }}>Major Events</h4>
+                    {validationResults.continuity_tracker.major_events.length > 0 ? (
+                      <ul className="text-sm text-gray-700 space-y-1">
+                        {validationResults.continuity_tracker.major_events.map((event, idx) => (
+                          <li key={idx}>
+                            <span className="font-medium text-gray-500">Ch. {event.chapter}:</span> {event.event}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-sm text-gray-500">No events tracked</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Close Button */}
+              <div className="flex justify-end">
+                <button
+                  onClick={() => setIsValidationModalOpen(false)}
+                  className="px-6 py-3 text-white rounded-lg hover:shadow-lg transition-all font-semibold"
+                  style={{ background: 'linear-gradient(to right, var(--tw-sapphire-blue), var(--tw-wave-blue))' }}
+                >
+                  Close
                 </button>
               </div>
             </div>

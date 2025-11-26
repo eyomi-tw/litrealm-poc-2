@@ -19,12 +19,14 @@ const toneOptions = [
     icon: '🦸',
     title: 'Heroic',
     description: 'Grand, inspiring, classic fantasy adventure. Clear morality, epic quests, noble heroics.',
+    premium: true,
   },
   {
     id: 'comedic' as Tone,
     icon: '😄',
     title: 'Comedic',
     description: 'Light-hearted and witty, poking fun at fantasy tropes with humor and self-awareness.',
+    premium: true,
   },
   {
     id: 'dark' as Tone,
@@ -73,7 +75,8 @@ const questTemplates = [
     icon: '⚔️',
     title: 'Conquest',
     description: 'Claim power through strength. Conquer territories, defeat rival factions, or overthrow tyrants.',
-    examples: ['Siege an enemy fortress', 'Unite warring clans', 'Overthrow a corrupt ruler']
+    examples: ['Siege an enemy fortress', 'Unite warring clans', 'Overthrow a corrupt ruler'],
+    premium: true,
   },
   {
     id: 'mystery' as QuestType,
@@ -198,12 +201,19 @@ export default function StepFour({ initialData, onDataChange, onGeneratePrologue
             <button
               key={tone.id}
               onClick={() => handleToneSelect(tone.id)}
-              className={`text-left p-3 rounded-lg transition-all ${
+              className={`text-left p-3 rounded-lg transition-all relative ${
                 selectedTone === tone.id
                   ? 'border-2 border-black bg-neutral-50 shadow-lg'
                   : 'border border-neutral-200 hover:border-neutral-400 hover:shadow-md'
               }`}
             >
+              {tone.premium && (
+                <div className="absolute top-1 right-1">
+                  <span className="text-[10px] bg-gradient-to-r from-amber-500 to-yellow-400 text-white px-1.5 py-0.5 rounded font-medium">
+                    Premium
+                  </span>
+                </div>
+              )}
               <div className="flex items-center space-x-2 mb-1">
                 <span className="text-xl">{tone.icon}</span>
                 <h3 className="text-xs font-semibold">{tone.title}</h3>
@@ -224,12 +234,19 @@ export default function StepFour({ initialData, onDataChange, onGeneratePrologue
             <button
               key={quest.id}
               onClick={() => handleQuestSelect(quest.id)}
-              className={`p-3 md:p-4 rounded-lg text-left transition-all ${
+              className={`p-3 md:p-4 rounded-lg text-left transition-all relative ${
                 selectedQuest === quest.id
                   ? 'border-2 border-black bg-neutral-50 shadow-lg'
                   : 'border border-neutral-200 hover:border-neutral-400 hover:shadow-md'
               }`}
             >
+              {quest.premium && (
+                <div className="absolute top-2 right-2">
+                  <span className="text-xs bg-gradient-to-r from-amber-500 to-yellow-400 text-white px-2 py-1 rounded font-medium">
+                    Premium
+                  </span>
+                </div>
+              )}
               <div className="text-center mb-2">
                 <span className="text-2xl md:text-3xl">{quest.icon}</span>
               </div>
@@ -313,13 +330,14 @@ export default function StepFour({ initialData, onDataChange, onGeneratePrologue
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-4">
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 mb-4">
                     {[
                       { label: 'World', data: validationResults.world_consistency },
                       { label: 'Character', data: validationResults.character_consistency },
                       { label: 'Tone', data: validationResults.narrator_tone },
                       { label: 'Quest', data: validationResults.quest_alignment },
-                      { label: 'Mode', data: validationResults.story_mode }
+                      { label: 'Mode', data: validationResults.story_mode },
+                      { label: 'LitRPG', data: validationResults.litrpg_fidelity }
                     ].map(({ label, data }) => (
                       <div key={label} className="text-center p-2 bg-neutral-50 rounded border border-neutral-200">
                         <div className="text-xs font-medium text-neutral-600 mb-1">{label}</div>

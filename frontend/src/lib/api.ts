@@ -114,6 +114,7 @@ export interface ContentValidationResponse {
   narrator_tone: ValidationCategory;
   quest_alignment: ValidationCategory;
   story_mode: ValidationCategory;
+  litrpg_fidelity: ValidationCategory;
   quality_notes: string;
   suggested_improvements: string;
 }
@@ -536,6 +537,66 @@ export async function deleteChapter(chapterId: string): Promise<{ message: strin
 
   if (!response.ok) {
     throw new Error(`Failed to delete chapter: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+// Book Validation Types
+export interface BookValidationCategory {
+  score: number;
+  status: 'PASS' | 'MINOR_ISSUES' | 'FAIL';
+  feedback: string;
+  issues_found: string[];
+}
+
+export interface ContinuityTrackerCharacter {
+  name: string;
+  first_appearance_chapter: number;
+  description?: string;
+}
+
+export interface ContinuityTrackerItem {
+  name: string;
+  acquired_chapter?: number;
+  lost_chapter?: number;
+  status: 'acquired' | 'lost' | 'used' | 'unknown';
+}
+
+export interface ContinuityTrackerEvent {
+  chapter: number;
+  event: string;
+}
+
+export interface ContinuityTracker {
+  characters_introduced: ContinuityTrackerCharacter[];
+  key_items: ContinuityTrackerItem[];
+  major_events: ContinuityTrackerEvent[];
+}
+
+export interface BookValidationResponse {
+  overall_score: number;
+  overall_status: 'PASS' | 'MINOR_ISSUES' | 'FAIL';
+  character_continuity: BookValidationCategory;
+  world_continuity: BookValidationCategory;
+  plot_continuity: BookValidationCategory;
+  timeline_consistency: BookValidationCategory;
+  item_tracking: BookValidationCategory;
+  stat_progression: BookValidationCategory;
+  tone_consistency: BookValidationCategory;
+  narrative_arc: BookValidationCategory;
+  cross_chapter_issues: string[];
+  continuity_tracker: ContinuityTracker;
+  suggested_fixes: string[];
+}
+
+export async function validateBook(bookId: string): Promise<BookValidationResponse> {
+  const response = await fetch(`${API_BASE_URL}/books/${bookId}/validate`, {
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to validate book: ${response.statusText}`);
   }
 
   return response.json();

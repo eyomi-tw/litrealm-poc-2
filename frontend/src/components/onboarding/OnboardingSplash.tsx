@@ -2,7 +2,8 @@
 
 import { useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
-import { listBooks, deleteBook, type BookResponse } from '@/lib/api';
+import { listBooks, deleteBook, getBook, type BookResponse } from '@/lib/api';
+import jsPDF from 'jspdf';
 
 export default function OnboardingSplash() {
   const router = useRouter();
@@ -10,6 +11,7 @@ export default function OnboardingSplash() {
   const [isLoadingBooks, setIsLoadingBooks] = useState(true);
   const [bookToDelete, setBookToDelete] = useState<BookResponse | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [exportingBookId, setExportingBookId] = useState<string | null>(null);
 
   useEffect(() => {
     const loadBooks = async () => {
@@ -49,6 +51,68 @@ export default function OnboardingSplash() {
 
   const handleCancelDelete = () => {
     setBookToDelete(null);
+  };
+
+  const handleExportBook = async (e: React.MouseEvent, book: BookResponse) => {
+    e.stopPropagation();
+
+    try {
+      setExportingBookId(book.id);
+
+      // Get fresh book data with all chapters
+      const fullBook = await getBook(book.id);
+
+      const doc = new jsPDF();
+
+      // Title page
+      doc.setFontSize(24);
+      doc.text(fullBook.title, 105, 50, { align: 'center' });
+      if (fullBook.subtitle) {
+        doc.setFontSize(16);
+        doc.text(fullBook.subtitle, 105, 65, { align: 'center' });
+      }
+
+      // Metadata
+      doc.setFontSize(10);
+      doc.text(`By ${fullBook.game_config.character.name}`, 105, 85, { align: 'center' });
+      doc.text(`${fullBook.game_config.world.name} - ${fullBook.game_config.tone}`, 105, 92, { align: 'center' });
+      doc.text(`${fullBook.chapters.length} chapters - ${fullBook.total_word_count.toLocaleString()} words`, 105, 99, { align: 'center' });
+
+      // Add chapters
+      fullBook.chapters.forEach((chapter, index) => {
+        doc.addPage();
+
+        // Chapter title
+        doc.setFontSize(18);
+        doc.text(`Chapter ${chapter.number}: ${chapter.title}`, 20, 20);
+
+        // Chapter content
+        doc.setFontSize(12);
+        let yPosition = 35;
+
+        const content = chapter.authored_content || '(No content yet)';
+        const splitContent = doc.splitTextToSize(content, 170);
+
+        splitContent.forEach((line: string) => {
+          if (yPosition > 280) {
+            doc.addPage();
+            yPosition = 20;
+          }
+          doc.text(line, 20, yPosition);
+          yPosition += 7;
+        });
+      });
+
+      // Generate filename
+      const safeTitle = fullBook.title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+      doc.save(`${safeTitle}.pdf`);
+
+    } catch (error) {
+      console.error('Error exporting book:', error);
+      alert('Failed to export book. Please try again.');
+    } finally {
+      setExportingBookId(null);
+    }
   };
 
   return (
@@ -135,12 +199,12 @@ export default function OnboardingSplash() {
                   background: 'linear-gradient(to right, var(--tw-sapphire-blue), var(--tw-wave-blue))',
                 }}
               >
-                Start Creating
+                Start a New Adventure
               </button>
             </div>
           </div>
 
-          {/* My Books Section */}
+          {/* My Adventures Section */}
           {!isLoadingBooks && books.length > 0 && (
             <div className="bg-gradient-to-br from-[#EDF1F3] to-white border-2 rounded-xl p-4 md:p-5 mb-4 md:mb-5 shadow-lg" style={{ borderColor: 'var(--tw-sapphire-blue)' }}>
               <div className="flex items-center space-x-3 mb-4">
@@ -149,7 +213,7 @@ export default function OnboardingSplash() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
                   </svg>
                 </div>
-                <h3 className="headline text-lg md:text-xl font-bold" style={{ color: 'var(--tw-sapphire-blue)' }}>My Books</h3>
+                <h3 className="headline text-lg md:text-xl font-bold" style={{ color: 'var(--tw-sapphire-blue)' }}>My Adventures</h3>
               </div>
               <p className="text-gray-700 mb-4 text-sm md:text-base leading-relaxed">
                 Continue writing your existing books or start a new one.
@@ -196,6 +260,23 @@ export default function OnboardingSplash() {
                       <svg className="w-4 h-4" style={{ color: 'var(--tw-flamingo-pink)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                       </svg>
+                    </button>
+                    <button
+                      onClick={(e) => handleExportBook(e, book)}
+                      disabled={exportingBookId === book.id}
+                      className="absolute bottom-2 right-2 p-2 rounded-lg hover:bg-blue-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Export to PDF"
+                    >
+                      {exportingBookId === book.id ? (
+                        <svg className="w-4 h-4 animate-spin" style={{ color: 'var(--tw-wave-blue)' }} fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                      ) : (
+                        <svg className="w-4 h-4" style={{ color: 'var(--tw-wave-blue)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                      )}
                     </button>
                   </div>
                 ))}
@@ -271,276 +352,8 @@ export default function OnboardingSplash() {
             </div>
           </div>
 
-          {/* Two Column Features */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-5 mb-4 md:mb-5">
-            {/* Working Prototype */}
-            <div className="bg-gradient-to-br from-white to-[#EDF1F3] border-2 rounded-xl p-4 md:p-5 shadow-md hover:shadow-xl transition-all" style={{ borderColor: 'rgba(71, 161, 173, 0.3)' }}>
-              <div className="flex items-center space-x-2 md:space-x-3 mb-3 md:mb-4">
-                <div className="w-8 h-8 md:w-9 md:h-9 rounded-lg flex items-center justify-center" style={{ backgroundColor: 'var(--tw-wave-blue)' }}>
-                  <svg className="w-4 h-4 md:w-5 md:h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                </div>
-                <h3 className="headline text-lg md:text-xl font-bold" style={{ color: 'var(--tw-sapphire-blue)' }}>Working Prototype</h3>
-              </div>
-              <p className="text-gray-700 mb-3 leading-relaxed text-xs md:text-sm">
-                Every component you'll interact with is fully functional. This isn't a mockup—it's a complete system ready for testing.
-              </p>
-              <ul className="space-y-2">
-                <li className="flex items-start space-x-2 text-gray-800 text-xs md:text-sm">
-                  <span className="mt-1" style={{ color: 'var(--tw-wave-blue)' }}>•</span>
-                  <span>Live database connections</span>
-                </li>
-                <li className="flex items-start space-x-2 text-gray-800 text-xs md:text-sm">
-                  <span className="mt-1" style={{ color: 'var(--tw-wave-blue)' }}>•</span>
-                  <span>Real AI processing</span>
-                </li>
-                <li className="flex items-start space-x-2 text-gray-800 text-xs md:text-sm">
-                  <span className="mt-1" style={{ color: 'var(--tw-wave-blue)' }}>•</span>
-                  <span>End-to-end workflows</span>
-                </li>
-                <li className="flex items-start space-x-2 text-gray-800 text-xs md:text-sm">
-                  <span className="mt-1" style={{ color: 'var(--tw-wave-blue)' }}>•</span>
-                  <span>Actual file generation</span>
-                </li>
-              </ul>
-            </div>
-
-            {/* Intentional Design */}
-            <div className="bg-gradient-to-br from-white to-[#EDF1F3] border-2 rounded-xl p-4 md:p-5 shadow-md hover:shadow-xl transition-all" style={{ borderColor: 'rgba(99, 79, 125, 0.3)' }}>
-              <div className="flex items-center space-x-2 md:space-x-3 mb-3 md:mb-4">
-                <div className="w-8 h-8 md:w-9 md:h-9 rounded-lg flex items-center justify-center" style={{ backgroundColor: 'var(--tw-amethyst-purple)' }}>
-                  <svg className="w-4 h-4 md:w-5 md:h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                  </svg>
-                </div>
-                <h3 className="headline text-lg md:text-xl font-bold" style={{ color: 'var(--tw-sapphire-blue)' }}>Intentional Design</h3>
-              </div>
-              <p className="text-gray-700 mb-3 leading-relaxed text-xs md:text-sm">
-                The lightweight interface keeps focus on functionality over aesthetics. We're proving the system works before polishing the presentation.
-              </p>
-              <ul className="space-y-2">
-                <li className="flex items-start space-x-2 text-gray-800 text-xs md:text-sm">
-                  <span className="mt-1" style={{ color: 'var(--tw-amethyst-purple)' }}>•</span>
-                  <span>Function-first approach</span>
-                </li>
-                <li className="flex items-start space-x-2 text-gray-800 text-xs md:text-sm">
-                  <span className="mt-1" style={{ color: 'var(--tw-amethyst-purple)' }}>•</span>
-                  <span>Rapid iteration enabled</span>
-                </li>
-                <li className="flex items-start space-x-2 text-gray-800 text-xs md:text-sm">
-                  <span className="mt-1" style={{ color: 'var(--tw-amethyst-purple)' }}>•</span>
-                  <span>User feedback focused</span>
-                </li>
-                <li className="flex items-start space-x-2 text-gray-800 text-xs md:text-sm">
-                  <span className="mt-1" style={{ color: 'var(--tw-amethyst-purple)' }}>•</span>
-                  <span>Performance optimized</span>
-                </li>
-              </ul>
-            </div>
-          </div>
-
-          {/* Live AI Agent Architecture */}
-          <div className="bg-gradient-to-br from-[#EDF1F3] to-white border-2 rounded-xl p-4 md:p-5 shadow-lg mb-4 md:mb-5" style={{ borderColor: 'var(--tw-sapphire-blue)' }}>
-            <div className="flex items-center space-x-2 md:space-x-3 mb-3 md:mb-4">
-              <div className="w-8 h-8 md:w-9 md:h-9 rounded-lg flex items-center justify-center" style={{ backgroundColor: 'var(--tw-sapphire-blue)' }}>
-                <svg className="w-4 h-4 md:w-5 md:h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
-                </svg>
-              </div>
-              <h3 className="headline text-lg md:text-xl font-bold" style={{ color: 'var(--tw-sapphire-blue)' }}>Live AI Agent Architecture</h3>
-            </div>
-            <p className="text-gray-700 mb-4 text-sm md:text-base leading-relaxed">
-              These agents collaborate in real-time to create seamless storytelling experiences. The unified AI system handles every aspect from compelling openings to polished publishing-ready output.
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
-              {/* Prologue Generator Agent */}
-              <div className="bg-white border-2 rounded-lg p-3 md:p-4 hover:shadow-lg transition-all group" style={{ borderColor: 'rgba(107, 158, 120, 0.3)' }}>
-                <div className="flex items-center space-x-2 mb-2 md:mb-3">
-                  <div className="w-2.5 h-2.5 md:w-3 md:h-3 rounded-full animate-pulse-custom" style={{ backgroundColor: 'var(--tw-jade-green)' }}></div>
-                  <h4 className="text-sm md:text-base font-bold transition-colors" style={{ color: 'var(--tw-sapphire-blue)' }}>
-                    Prologue Generator
-                  </h4>
-                </div>
-                <p className="text-gray-700 mb-2 md:mb-3 leading-relaxed text-xs md:text-sm">
-                  Creates dynamic story openings based on player choices and world parameters
-                </p>
-                <div className="space-y-1.5">
-                  <div className="flex items-center space-x-2 text-xs text-gray-700">
-                    <svg className="w-3 h-3" style={{ color: 'var(--tw-jade-green)' }} fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                    </svg>
-                    <span>Real-time generation</span>
-                  </div>
-                  <div className="flex items-center space-x-2 text-xs text-gray-700">
-                    <svg className="w-3 h-3" style={{ color: 'var(--tw-jade-green)' }} fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                    </svg>
-                    <span>Context-aware narratives</span>
-                  </div>
-                  <div className="flex items-center space-x-2 text-xs text-gray-700">
-                    <svg className="w-3 h-3" style={{ color: 'var(--tw-jade-green)' }} fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                    </svg>
-                    <span>Character integration</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Story Writer Agent */}
-              <div className="bg-white border-2 rounded-lg p-3 md:p-4 hover:shadow-lg transition-all group" style={{ borderColor: 'rgba(71, 161, 173, 0.3)' }}>
-                <div className="flex items-center space-x-2 mb-2 md:mb-3">
-                  <div className="w-2.5 h-2.5 md:w-3 md:h-3 rounded-full animate-pulse-custom" style={{ backgroundColor: 'var(--tw-wave-blue)' }}></div>
-                  <h4 className="text-sm md:text-base font-bold transition-colors" style={{ color: 'var(--tw-sapphire-blue)' }}>
-                    Story Writer
-                  </h4>
-                </div>
-                <p className="text-gray-700 mb-2 md:mb-3 leading-relaxed text-xs md:text-sm">
-                  Continuously writes and adapts narrative based on player decisions and outcomes
-                </p>
-                <div className="space-y-1.5">
-                  <div className="flex items-center space-x-2 text-xs text-gray-700">
-                    <svg className="w-3 h-3" style={{ color: 'var(--tw-wave-blue)' }} fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                    </svg>
-                    <span>Dynamic storytelling</span>
-                  </div>
-                  <div className="flex items-center space-x-2 text-xs text-gray-700">
-                    <svg className="w-3 h-3" style={{ color: 'var(--tw-wave-blue)' }} fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                    </svg>
-                    <span>Consequence tracking</span>
-                  </div>
-                  <div className="flex items-center space-x-2 text-xs text-gray-700">
-                    <svg className="w-3 h-3" style={{ color: 'var(--tw-wave-blue)' }} fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                    </svg>
-                    <span>Emotional continuity</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Story Compiler Agent */}
-              <div className="bg-white border-2 rounded-lg p-3 md:p-4 hover:shadow-lg transition-all group" style={{ borderColor: 'rgba(99, 79, 125, 0.3)' }}>
-                <div className="flex items-center space-x-2 mb-2 md:mb-3">
-                  <div className="w-2.5 h-2.5 md:w-3 md:h-3 rounded-full animate-pulse-custom" style={{ backgroundColor: 'var(--tw-amethyst-purple)' }}></div>
-                  <h4 className="text-sm md:text-base font-bold transition-colors" style={{ color: 'var(--tw-sapphire-blue)' }}>
-                    Story Compiler
-                  </h4>
-                </div>
-                <p className="text-gray-700 mb-2 md:mb-3 leading-relaxed text-xs md:text-sm">
-                  Transforms gameplay sessions into publishable, coherent narratives
-                </p>
-                <div className="space-y-1.5">
-                  <div className="flex items-center space-x-2 text-xs text-gray-700">
-                    <svg className="w-3 h-3" style={{ color: 'var(--tw-amethyst-purple)' }} fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                    </svg>
-                    <span>Auto-formatting</span>
-                  </div>
-                  <div className="flex items-center space-x-2 text-xs text-gray-700">
-                    <svg className="w-3 h-3" style={{ color: 'var(--tw-amethyst-purple)' }} fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                    </svg>
-                    <span>Multi-format export</span>
-                  </div>
-                  <div className="flex items-center space-x-2 text-xs text-gray-700">
-                    <svg className="w-3 h-3" style={{ color: 'var(--tw-amethyst-purple)' }} fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                    </svg>
-                    <span>Publishing ready</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Technical Architecture */}
-          <div className="bg-gradient-to-br from-[#EDF1F3] to-white border-2 border-gray-300 rounded-xl p-4 md:p-5 hover:shadow-lg transition-all mb-4 md:mb-5">
-            <div className="flex items-start space-x-2 md:space-x-3">
-              <div className="w-8 h-8 md:w-9 md:h-9 bg-gray-700 rounded-lg flex items-center justify-center mt-0.5">
-                <svg className="w-4 h-4 md:w-5 md:h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-                </svg>
-              </div>
-              <div className="flex-1">
-                <h4 className="headline text-base md:text-lg font-bold mb-2" style={{ color: 'var(--tw-sapphire-blue)' }}>Technical Architecture</h4>
-                <p className="text-gray-700 mb-3 md:mb-4 leading-relaxed text-xs md:text-sm">
-                  Built on proven technologies with custom AI integrations. Every interaction flows through our specialized agent network.
-                </p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
-                  <div className="bg-white rounded-lg p-3 md:p-4 border-2" style={{ borderColor: 'rgba(71, 161, 173, 0.2)' }}>
-                    <h5 className="headline font-bold mb-2 md:mb-3 flex items-center text-xs md:text-sm" style={{ color: 'var(--tw-sapphire-blue)' }}>
-                      <svg className="w-3.5 h-3.5 md:w-4 md:h-4 mr-1.5" style={{ color: 'var(--tw-wave-blue)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                      </svg>
-                      Core Systems
-                    </h5>
-                    <ul className="space-y-1.5 md:space-y-2">
-                      <li className="flex items-center space-x-1.5 text-gray-700 text-xs">
-                        <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: 'var(--tw-wave-blue)' }}></div>
-                        <span>Real-time AI processing</span>
-                      </li>
-                      <li className="flex items-center space-x-1.5 text-gray-700 text-xs">
-                        <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: 'var(--tw-wave-blue)' }}></div>
-                        <span>Dynamic content generation</span>
-                      </li>
-                      <li className="flex items-center space-x-1.5 text-gray-700 text-xs">
-                        <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: 'var(--tw-wave-blue)' }}></div>
-                        <span>Persistent story state</span>
-                      </li>
-                      <li className="flex items-center space-x-1.5 text-gray-700 text-xs">
-                        <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: 'var(--tw-wave-blue)' }}></div>
-                        <span>Multi-format compilation</span>
-                      </li>
-                    </ul>
-                  </div>
-                  <div className="bg-white rounded-lg p-3 md:p-4 border-2" style={{ borderColor: 'rgba(99, 79, 125, 0.2)' }}>
-                    <h5 className="headline font-bold mb-2 md:mb-3 flex items-center text-xs md:text-sm" style={{ color: 'var(--tw-sapphire-blue)' }}>
-                      <svg className="w-3.5 h-3.5 md:w-4 md:h-4 mr-1.5" style={{ color: 'var(--tw-amethyst-purple)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                      </svg>
-                      Live Capabilities
-                    </h5>
-                    <ul className="space-y-1.5 md:space-y-2">
-                      <li className="flex items-center space-x-1.5 text-gray-700 text-xs">
-                        <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: 'var(--tw-amethyst-purple)' }}></div>
-                        <span>Character creation & tracking</span>
-                      </li>
-                      <li className="flex items-center space-x-1.5 text-gray-700 text-xs">
-                        <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: 'var(--tw-amethyst-purple)' }}></div>
-                        <span>World building & persistence</span>
-                      </li>
-                      <li className="flex items-center space-x-1.5 text-gray-700 text-xs">
-                        <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: 'var(--tw-amethyst-purple)' }}></div>
-                        <span>Decision consequence mapping</span>
-                      </li>
-                      <li className="flex items-center space-x-1.5 text-gray-700 text-xs">
-                        <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: 'var(--tw-amethyst-purple)' }}></div>
-                        <span>Story export & publishing</span>
-                      </li>
-                    </ul>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Footer CTA */}
+          {/* Footer */}
           <div className="pt-4 md:pt-5 border-t-2" style={{ borderColor: 'var(--tw-mist-gray)' }}>
-            <div className="flex justify-center mb-4">
-              <button
-                onClick={() => router.push('/onboarding/step/1')}
-                className="px-10 md:px-12 py-3.5 md:py-4 text-white rounded-lg font-semibold shadow-lg text-base md:text-lg hover:shadow-xl hover:-translate-y-0.5 transition-all"
-                style={{
-                  background: 'linear-gradient(to right, var(--tw-sapphire-blue), var(--tw-wave-blue))',
-                }}
-              >
-                Start Creating
-              </button>
-            </div>
             <div className="flex justify-center items-center text-xs text-gray-500">
               <span className="mr-2">Powered by</span>
               <img

@@ -11,7 +11,7 @@ Analyze generated narrative content (prologues, chapters) and validate that it a
 
 ## VALIDATION CATEGORIES
 
-You will validate content across 5 key dimensions:
+You will validate content across 6 key dimensions:
 
 ### 1. WORLD CONSISTENCY
 **Check if the content matches the world template and settings:**
@@ -81,6 +81,39 @@ You will validate content across 5 key dimensions:
 - ✅ PASS (score: 90-100): Mode clearly reflected in setup
 - ⚠️ MINOR_ISSUES (score: 70-89): Mode present but subtle
 - ❌ FAIL (score: 0-69): Contradicts mode or ignores it
+
+### 6. LITRPG STYLE FIDELITY
+**Check if the content follows LitRPG genre conventions:**
+LitRPG is a subgenre that blends fantasy/sci-fi narratives with RPG game mechanics woven into the prose. The content should feel like a story happening inside a game world.
+
+**Key LitRPG Elements to Check:**
+- **System Presence**: Does the world acknowledge game-like systems? (levels, stats, skills, classes)
+- **Stat References**: Are character statistics referenced naturally in the narrative? (HP, Mana, Strength, etc.)
+- **Progression Awareness**: Does the character/narrative acknowledge leveling, XP gains, or skill improvements?
+- **Game Terminology**: Appropriate use of RPG terms (quest, loot, spawn, aggro, buff/debuff, cooldown, etc.)
+- **System Notifications**: Presence of system-style messages or notifications (skill unlocked, level up, quest updated)
+- **Blue Box / Status Windows**: Optional but genre-appropriate formatted stat displays or system messages
+- **Item/Loot Descriptions**: Items described with game-like attributes (rarity, stats, effects)
+- **Combat Mechanics**: Combat described with awareness of game rules (damage, critical hits, skills, abilities)
+
+**What Makes Good LitRPG Prose:**
+- Stats and mechanics feel natural, not forced or info-dumpy
+- The character interacts with the system as part of their reality
+- Game elements enhance rather than interrupt the narrative flow
+- Balance between story immersion and mechanical awareness
+- Progression feels earned and meaningful
+
+**What to Flag:**
+- Pure fantasy with NO game elements (not LitRPG)
+- Mechanics that contradict established game rules
+- Over-reliance on stat dumps without narrative context
+- Character unaware of systems that should be visible to them
+- Inconsistent mechanical rules within the same content
+
+**Scoring:**
+- ✅ PASS (score: 90-100): Strong LitRPG identity with natural system integration, clear game mechanics woven into narrative
+- ⚠️ MINOR_ISSUES (score: 70-89): Some LitRPG elements present but inconsistent or could be stronger
+- ❌ FAIL (score: 0-69): Missing LitRPG elements entirely, reads like pure fantasy/fiction without game mechanics
 
 ## ADDITIONAL QUALITY CHECKS
 
@@ -157,6 +190,11 @@ STORY_MODE:
 - Status: [PASS | MINOR_ISSUES | FAIL]
 - Feedback: [Specific observations about mode integration]
 
+LITRPG_FIDELITY:
+- Score: [0-100]
+- Status: [PASS | MINOR_ISSUES | FAIL]
+- Feedback: [Specific observations about LitRPG genre elements - system presence, stat references, game mechanics integration]
+
 QUALITY_NOTES:
 [Any additional observations about writing quality, player agency, or immersion]
 
@@ -167,7 +205,7 @@ SUGGESTED_IMPROVEMENTS:
 ## SCORING GUIDELINES
 
 **Overall Score Calculation:**
-- Average all 5 category scores
+- Average all 6 category scores
 - Round to nearest integer
 
 **Overall Status:**
@@ -225,11 +263,16 @@ STORY_MODE:
 - Status: PASS
 - Feedback: Progression mode subtly hinted through "your training serves you well" - suggests skill development narrative.
 
+LITRPG_FIDELITY:
+- Score: 88
+- Status: MINOR_ISSUES
+- Feedback: Good LitRPG foundation with character awareness of their skills and abilities. However, would benefit from more explicit system elements - consider adding stat references, XP mentions, or system notification style text. The "burning map" could trigger a system message about a quest update.
+
 QUALITY_NOTES:
 Excellent opening hook, strong sensory details, maintains player agency by not dictating actions.
 
 SUGGESTED_IMPROVEMENTS:
-Consider explicitly mentioning "Aethermoor" world name in first paragraph for stronger personalization.
+Consider explicitly mentioning "Aethermoor" world name in first paragraph for stronger personalization. Add LitRPG system elements like a brief stat check or system notification to strengthen genre identity.
 ```
 
 Now validate the content provided!"""

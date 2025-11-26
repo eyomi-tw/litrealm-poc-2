@@ -17,12 +17,15 @@ from assistant.story_compiler_agent import story_compiler_agent
 from assistant.prologue_generator_agent import prologue_generator_agent
 from assistant.content_validation_agent import content_validation_agent
 from assistant.gameplay_simulator_agent import gameplay_simulator_agent
+from assistant.book_validation_agent import book_validation_agent
 from models import (
     GameConfig, CompiledStoryResponse, CompiledStory, StoryMetadata, StoryChapter,
     PrologueGenerationRequest, PrologueGenerationResponse,
     ContentValidationRequest, ContentValidationResponse, ValidationCategory,
     Book, Chapter, GameMessage, CreateBookRequest, CreateChapterRequest,
-    UpdateChapterRequest, CompleteChapterRequest, ChapterCompilationResponse
+    UpdateChapterRequest, CompleteChapterRequest, ChapterCompilationResponse,
+    BookValidationResponse, BookValidationCategory,
+    ContinuityTracker, ContinuityTrackerCharacter, ContinuityTrackerItem, ContinuityTrackerEvent
 )
 import database as db
 
@@ -258,6 +261,12 @@ async def submit_onboarding(config: GameConfig):
             'xp_to_next_level': 100,
             'character_stats': config.character.stats.dict(),
             'inventory': [],
+
+            # World state tracking (for UI display)
+            'current_location': config.world.name,  # Initialize from world name (sceneLocation is placeholder)
+            'weather': 'Clear',  # Default weather
+            'current_quest': f"{config.story.questType.replace('_', ' ').title()} Quest",  # Initialize from quest type
+            'npcs_present': [],  # Will be populated by the DM during gameplay
 
             # Story state tracking
             'story_started': False,  # Flag to indicate if the first message has been sent
@@ -2085,6 +2094,7 @@ def parse_validation_response(response_text: str) -> ContentValidationResponse:
         narrator_tone = parse_category('NARRATOR_TONE')
         quest_alignment = parse_category('QUEST_ALIGNMENT')
         story_mode = parse_category('STORY_MODE')
+        litrpg_fidelity = parse_category('LITRPG_FIDELITY')
 
         # Extract quality notes and suggestions
         quality_match = re.search(r'QUALITY_NOTES:\s*([^\n]+(?:\n(?![\w_]+:)[^\n]+)*)', response_text, re.MULTILINE)
@@ -2101,6 +2111,7 @@ def parse_validation_response(response_text: str) -> ContentValidationResponse:
             narrator_tone=narrator_tone,
             quest_alignment=quest_alignment,
             story_mode=story_mode,
+            litrpg_fidelity=litrpg_fidelity,
             quality_notes=quality_notes,
             suggested_improvements=suggested_improvements
         )
@@ -2117,9 +2128,249 @@ def parse_validation_response(response_text: str) -> ContentValidationResponse:
             narrator_tone=ValidationCategory(score=0, status='FAIL', feedback='Parsing error'),
             quest_alignment=ValidationCategory(score=0, status='FAIL', feedback='Parsing error'),
             story_mode=ValidationCategory(score=0, status='FAIL', feedback='Parsing error'),
+            litrpg_fidelity=ValidationCategory(score=0, status='FAIL', feedback='Parsing error'),
             quality_notes='Failed to parse validation response',
             suggested_improvements='Please regenerate content'
         )
+
+@app.post("/books/{book_id}/validate", response_model=BookValidationResponse)
+async def validate_book(book_id: str):
+    """
+    Validate an entire book for cross-chapter consistency, continuity, and narrative coherence.
+    Uses the Book Validation Agent to check character, world, plot, timeline, item, stat, tone, and arc consistency.
+    """
+    try:
+        # Get the book with all chapters
+        book = db.get_book(book_id)
+        if not book:
+            raise HTTPException(status_code=404, detail="Book not found")
+
+        # Need at least 2 chapters for cross-chapter validation
+        if len(book.chapters) < 2:
+            raise HTTPException(
+                status_code=400,
+                detail="Book must have at least 2 chapters for cross-chapter validation"
+            )
+
+        user_id = "book_validator"
+        validation_session_id = f"book_validation_{uuid.uuid4()}"
+
+        # Build chapter content for validation
+        chapters_content = ""
+        for chapter in book.chapters:
+            chapters_content += f"\nCHAPTER {chapter.number}: {chapter.title}\n"
+            chapters_content += (chapter.authored_content or '(No content yet)') + "\n"
+
+        # Build validation prompt with all book content
+        game_config = book.game_config
+        validation_prompt = f"""BOOK TITLE: {book.title}
+TOTAL CHAPTERS: {len(book.chapters)}
+
+STORY CONFIGURATION:
+- mode: {game_config.mode}
+- tone: {game_config.tone}
+- world_template: {game_config.world.template if game_config.world else 'unknown'}
+- world_name: {game_config.world.name if game_config.world else 'unknown'}
+- character_name: {game_config.character.name if game_config.character else 'unknown'}
+- character_class: {game_config.character.character_class if game_config.character else 'unknown'}
+- quest_template: {game_config.story.questType if game_config.story else 'unknown'}
+
+{chapters_content}
+
+Please validate this complete book for cross-chapter consistency and provide your assessment."""
+
+        # Run validation using standalone runner
+        validation_runner = Runner(
+            app_name='litrealms_book_validation',
+            agent=book_validation_agent,
+            session_service=session_service
+        )
+
+        # Create session for validation
+        await session_service.create_session(
+            app_name='litrealms_book_validation',
+            user_id=user_id,
+            session_id=validation_session_id,
+            state={}
+        )
+
+        # Use Content for the message
+        message = types.Content(
+            role='user',
+            parts=[types.Part(text=validation_prompt)]
+        )
+
+        response_text = ""
+        async for event in validation_runner.run_async(
+            user_id=user_id,
+            session_id=validation_session_id,
+            new_message=message
+        ):
+            if event.content and event.content.parts:
+                for part in event.content.parts:
+                    if hasattr(part, 'text') and part.text:
+                        response_text += part.text
+
+        # Parse validation response
+        validation_result = parse_book_validation_response(response_text)
+
+        return validation_result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        print(f"Error validating book: {str(e)}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail={"error": str(e)})
+
+
+def parse_book_validation_response(response_text: str) -> BookValidationResponse:
+    """
+    Parse the book validation agent's structured response into BookValidationResponse model.
+    """
+    try:
+        # Extract overall scores
+        overall_score = int(re.search(r'OVERALL_SCORE:\s*(\d+)', response_text).group(1))
+        overall_status = re.search(r'OVERALL_STATUS:\s*(PASS|MINOR_ISSUES|FAIL)', response_text).group(1)
+
+        # Parse each validation category with issues
+        def parse_book_category(category_name: str) -> BookValidationCategory:
+            # Match score and status
+            pattern = rf'{category_name}:\s*-\s*Score:\s*(\d+)\s*-\s*Status:\s*(PASS|MINOR_ISSUES|FAIL)\s*-\s*Feedback:\s*([^\n]+(?:\n(?!-\s*Issues)[^\n]+)*)'
+            match = re.search(pattern, response_text, re.IGNORECASE | re.MULTILINE)
+
+            # Match issues found
+            issues_pattern = rf'{category_name}:.*?-\s*Issues Found:\s*([^\n]+(?:\n(?![\w_]+:)[^\n]+)*)'
+            issues_match = re.search(issues_pattern, response_text, re.IGNORECASE | re.MULTILINE | re.DOTALL)
+
+            issues_found = []
+            if issues_match:
+                issues_text = issues_match.group(1).strip()
+                if issues_text.lower() != 'none' and issues_text != '':
+                    # Split by common list separators
+                    issues_found = [i.strip().strip('-').strip('•').strip()
+                                   for i in re.split(r'[\n,;]', issues_text)
+                                   if i.strip() and i.strip().lower() != 'none']
+
+            if match:
+                return BookValidationCategory(
+                    score=int(match.group(1)),
+                    status=match.group(2),
+                    feedback=match.group(3).strip(),
+                    issues_found=issues_found
+                )
+            else:
+                return BookValidationCategory(
+                    score=0,
+                    status='FAIL',
+                    feedback=f'Failed to parse {category_name}',
+                    issues_found=[]
+                )
+
+        character_continuity = parse_book_category('CHARACTER_CONTINUITY')
+        world_continuity = parse_book_category('WORLD_CONTINUITY')
+        plot_continuity = parse_book_category('PLOT_CONTINUITY')
+        timeline_consistency = parse_book_category('TIMELINE_CONSISTENCY')
+        item_tracking = parse_book_category('ITEM_TRACKING')
+        stat_progression = parse_book_category('STAT_PROGRESSION')
+        tone_consistency = parse_book_category('TONE_CONSISTENCY')
+        narrative_arc = parse_book_category('NARRATIVE_ARC')
+
+        # Extract cross-chapter issues
+        cross_chapter_match = re.search(
+            r'CROSS_CHAPTER_ISSUES:\s*([^\n]+(?:\n(?!CONTINUITY_TRACKER)[^\n]+)*)',
+            response_text,
+            re.MULTILINE | re.DOTALL
+        )
+        cross_chapter_issues = []
+        if cross_chapter_match:
+            issues_text = cross_chapter_match.group(1).strip()
+            if issues_text.lower() != 'none' and issues_text != '':
+                cross_chapter_issues = [i.strip().strip('-').strip('•').strip()
+                                       for i in re.split(r'\n', issues_text)
+                                       if i.strip() and i.strip().lower() != 'none' and not i.strip().startswith('CONTINUITY')]
+
+        # Extract suggested fixes
+        fixes_match = re.search(
+            r'SUGGESTED_FIXES:\s*([^\n]+(?:\n(?!$)[^\n]+)*)',
+            response_text,
+            re.MULTILINE | re.DOTALL
+        )
+        suggested_fixes = []
+        if fixes_match:
+            fixes_text = fixes_match.group(1).strip()
+            if fixes_text.lower() != 'none' and fixes_text != '':
+                suggested_fixes = [f.strip().strip('-').strip('•').strip().strip('1234567890.').strip()
+                                  for f in re.split(r'\n', fixes_text)
+                                  if f.strip() and f.strip().lower() != 'none']
+
+        # Parse continuity tracker (simplified - full parsing would require more complex regex)
+        continuity_tracker = ContinuityTracker(
+            characters_introduced=[],
+            key_items=[],
+            major_events=[]
+        )
+
+        # Try to extract characters
+        chars_match = re.search(
+            r'Characters Introduced:\s*([^\n]+(?:\n(?!-\s*Key)[^\n]+)*)',
+            response_text,
+            re.MULTILINE
+        )
+        if chars_match:
+            chars_text = chars_match.group(1).strip()
+            char_entries = re.findall(r'(\w+)\s*\((?:Chapter|Ch\.?)\s*(\d+)\)', chars_text)
+            for name, chapter in char_entries:
+                continuity_tracker.characters_introduced.append(
+                    ContinuityTrackerCharacter(name=name, first_appearance_chapter=int(chapter))
+                )
+
+        return BookValidationResponse(
+            overall_score=overall_score,
+            overall_status=overall_status,
+            character_continuity=character_continuity,
+            world_continuity=world_continuity,
+            plot_continuity=plot_continuity,
+            timeline_consistency=timeline_consistency,
+            item_tracking=item_tracking,
+            stat_progression=stat_progression,
+            tone_consistency=tone_consistency,
+            narrative_arc=narrative_arc,
+            cross_chapter_issues=cross_chapter_issues,
+            continuity_tracker=continuity_tracker,
+            suggested_fixes=suggested_fixes
+        )
+
+    except Exception as e:
+        print(f"Error parsing book validation response: {str(e)}")
+        print(f"Response text: {response_text}")
+        # Return a fallback response
+        empty_category = BookValidationCategory(
+            score=0,
+            status='FAIL',
+            feedback='Parsing error',
+            issues_found=[]
+        )
+        return BookValidationResponse(
+            overall_score=0,
+            overall_status='FAIL',
+            character_continuity=empty_category,
+            world_continuity=empty_category,
+            plot_continuity=empty_category,
+            timeline_consistency=empty_category,
+            item_tracking=empty_category,
+            stat_progression=empty_category,
+            tone_consistency=empty_category,
+            narrative_arc=empty_category,
+            cross_chapter_issues=['Failed to parse validation response'],
+            continuity_tracker=ContinuityTracker(
+                characters_introduced=[],
+                key_items=[],
+                major_events=[]
+            ),
+            suggested_fixes=['Please try again or check the book content']
+        )
+
 
 if __name__ == "__main__":
     import uvicorn

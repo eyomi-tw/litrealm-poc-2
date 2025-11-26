@@ -20,6 +20,7 @@ interface WorldTemplate {
   description: string;
   tags: string[];
   defaults: Partial<WorldConfig>;
+  premium?: boolean;
 }
 
 const worldTemplates: WorldTemplate[] = [
@@ -29,6 +30,7 @@ const worldTemplates: WorldTemplate[] = [
     icon: '🏰',
     description: 'A high-fantasy realm where magic pulses through every stone. Mages rule from crystalline towers, ancient spells shape the land, and mystical academies train wizards.',
     tags: ['High Magic', 'Political Intrigue', 'Heroic'],
+    premium: true,
     defaults: {
       template: 'arcane_empire',
       name: 'Arcane Empire',
@@ -83,6 +85,7 @@ const worldTemplates: WorldTemplate[] = [
     icon: '💾',
     description: 'A cyberpunk wasteland where reality and virtual space blur. Hackers navigate corrupt megacities, AI runs wild, and data is the ultimate currency.',
     tags: ['Cyberpunk', 'Hacking', 'Dark'],
+    premium: true,
     defaults: {
       template: 'digital_wastes',
       name: 'Digital Wastes',
@@ -250,12 +253,19 @@ export default function StepTwo({ initialData, onDataChange }: StepTwoProps) {
             <button
               key={template.id}
               onClick={() => handleTemplateSelect(template)}
-              className={`text-left p-3 md:p-4 rounded-lg transition-all ${
+              className={`text-left p-3 md:p-4 rounded-lg transition-all relative ${
                 selectedTemplate.id === template.id
                   ? 'border-2 border-black bg-neutral-50 shadow-lg'
                   : 'border border-neutral-200 hover:border-neutral-400 hover:shadow-md'
               }`}
             >
+              {template.premium && (
+                <div className="absolute top-2 right-2">
+                  <span className="text-xs bg-gradient-to-r from-amber-500 to-yellow-400 text-white px-2 py-1 rounded font-medium">
+                    Premium
+                  </span>
+                </div>
+              )}
               <div className="text-center mb-2">
                 <span className="text-2xl md:text-3xl">{template.icon}</span>
               </div>

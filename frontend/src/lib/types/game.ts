@@ -74,6 +74,7 @@ export interface CharacterTemplate {
   companions: Companion[];
   rivals: Rival[];
   image?: string; // Avatar image URL or placeholder
+  premium?: boolean; // Premium character template
 }
 
 export interface CharacterConfig {

@@ -40,14 +40,16 @@ export default function StepOne({ initialData, onDataChange }: StepOneProps) {
       title: 'Dungeon Crawl',
       description: 'Hardcore dungeon exploration with lots of loot, traps, and monster encounters. Combat-heavy gameplay with tactical decisions and treasure hunting.',
       tags: ['Combat-Heavy', 'Loot', 'Tactical'],
-      recommended: true
+      recommended: true,
+      premium: true
     },
     {
       id: 'survival_quest' as StoryMode,
       icon: '🔥',
       title: 'Survival Quest',
       description: 'Resource management is key - track health, mana, and supplies carefully. Every decision matters for survival in this tension-filled adventure.',
-      tags: ['Resource Management', 'High Stakes', 'Challenging']
+      tags: ['Resource Management', 'High Stakes', 'Challenging'],
+      premium: true
     },
     {
       id: 'campaign' as StoryMode,
@@ -61,7 +63,8 @@ export default function StepOne({ initialData, onDataChange }: StepOneProps) {
       icon: '✍️',
       title: 'Solo Mode',
       description: 'Personal journal-style adventures focused on character introspection and everyday moments. Lower stakes, relationship-building, and slice-of-life storytelling.',
-      tags: ['Personal', 'Introspective', 'Cozy']
+      tags: ['Personal', 'Introspective', 'Cozy'],
+      premium: true
     },
     {
       id: 'legacy' as StoryMode,
@@ -94,13 +97,18 @@ export default function StepOne({ initialData, onDataChange }: StepOneProps) {
                 : 'border border-neutral-200 hover:border-neutral-400 hover:shadow-md'
             }`}
           >
-            {modeOption.recommended && (
-              <div className="absolute top-2 right-2">
+            <div className="absolute top-2 right-2 flex gap-1">
+              {modeOption.premium && (
+                <span className="text-xs bg-gradient-to-r from-amber-500 to-yellow-400 text-white px-2 py-1 rounded font-medium">
+                  Premium
+                </span>
+              )}
+              {modeOption.recommended && (
                 <span className="text-xs bg-black text-white px-2 py-1 rounded">
                   Popular
                 </span>
-              </div>
-            )}
+              )}
+            </div>
             <div className="flex items-center space-x-2 mb-2">
               <span className="text-xl md:text-2xl">{modeOption.icon}</span>
               <h3 className="text-sm md:text-base font-semibold">{modeOption.title}</h3>

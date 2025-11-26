@@ -1417,7 +1417,7 @@ export default function ChapterPage({ params }: PageProps) {
                 {/* Location */}
                 <div>
                   <h3 className="text-xs font-semibold uppercase mb-1" style={{ color: 'var(--tw-wave-blue)' }}>Location</h3>
-                  <p className="text-sm" style={{ color: 'var(--tw-sapphire-blue)' }}>{gameState.current_location || 'Unknown'}</p>
+                  <p className="text-sm" style={{ color: 'var(--tw-sapphire-blue)' }}>{gameState.current_location || gameState.scene_location || 'Unknown'}</p>
                 </div>
 
                 {/* Time of Day */}

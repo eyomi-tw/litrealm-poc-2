@@ -238,6 +238,7 @@ class ContentValidationResponse(BaseModel):
     narrator_tone: ValidationCategory
     quest_alignment: ValidationCategory
     story_mode: ValidationCategory
+    litrpg_fidelity: ValidationCategory
     quality_notes: str
     suggested_improvements: str
 
@@ -312,3 +313,46 @@ class ChapterCompilationResponse(BaseModel):
     chapter_id: str
     word_count: int
     compiled_at: str
+
+
+# Book Validation Models
+class BookValidationCategory(BaseModel):
+    score: int  # 0-100
+    status: Literal['PASS', 'MINOR_ISSUES', 'FAIL']
+    feedback: str
+    issues_found: List[str]  # Specific issues with chapter references
+
+class ContinuityTrackerCharacter(BaseModel):
+    name: str
+    first_appearance_chapter: int
+    description: Optional[str] = None
+
+class ContinuityTrackerItem(BaseModel):
+    name: str
+    acquired_chapter: Optional[int] = None
+    lost_chapter: Optional[int] = None
+    status: Literal['acquired', 'lost', 'used', 'unknown']
+
+class ContinuityTrackerEvent(BaseModel):
+    chapter: int
+    event: str
+
+class ContinuityTracker(BaseModel):
+    characters_introduced: List[ContinuityTrackerCharacter]
+    key_items: List[ContinuityTrackerItem]
+    major_events: List[ContinuityTrackerEvent]
+
+class BookValidationResponse(BaseModel):
+    overall_score: int  # 0-100
+    overall_status: Literal['PASS', 'MINOR_ISSUES', 'FAIL']
+    character_continuity: BookValidationCategory
+    world_continuity: BookValidationCategory
+    plot_continuity: BookValidationCategory
+    timeline_consistency: BookValidationCategory
+    item_tracking: BookValidationCategory
+    stat_progression: BookValidationCategory
+    tone_consistency: BookValidationCategory
+    narrative_arc: BookValidationCategory
+    cross_chapter_issues: List[str]
+    continuity_tracker: ContinuityTracker
+    suggested_fixes: List[str]
